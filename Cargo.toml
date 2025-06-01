@@ -1,0 +1,26 @@
+[package]
+name = "claudelytics"
+version = "0.1.0"
+edition = "2021"
+description = "A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs"
+authors = ["nwiizo <nwiizo@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/nwiizo/claudelytics"
+homepage = "https://github.com/nwiizo/claudelytics"
+documentation = "https://github.com/nwiizo/claudelytics"
+readme = "README.md"
+keywords = ["claude", "analytics", "cli", "usage", "tokens"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["target/", ".git/", ".github/"]
+
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1.0"
+walkdir = "2.3"
+comfy-table = "7.0"
+colored = "2.0"
+tokio = { version = "1.0", features = ["full"] }
+rayon = "1.8"
