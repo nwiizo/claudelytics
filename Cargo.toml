@@ -1,6 +1,6 @@
 [package]
 name = "claudelytics"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 description = "A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs"
 authors = ["nwiizo <nwiizo@gmail.com>"]
