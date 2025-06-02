@@ -8,10 +8,10 @@ pub fn generate_daily_report(daily_map: DailyUsageMap) -> DailyReport {
         .iter()
         .map(|(date, usage)| DailyUsage::from((*date, usage)))
         .collect();
-    
+
     // Sort by date descending (most recent first)
     daily_entries.sort_by(|a, b| b.date.cmp(&a.date));
-    
+
     // Calculate totals
     let totals = daily_map
         .values()
@@ -19,7 +19,7 @@ pub fn generate_daily_report(daily_map: DailyUsageMap) -> DailyReport {
             acc.add(usage);
             acc
         });
-    
+
     DailyReport {
         daily: daily_entries,
         totals: TokenUsageTotals::from(&totals),
@@ -44,14 +44,14 @@ pub fn generate_session_report(session_map: SessionUsageMap) -> SessionReport {
             }
         })
         .collect();
-    
+
     // Sort by total cost descending (highest cost first)
     session_entries.sort_by(|a, b| {
         b.total_cost
             .partial_cmp(&a.total_cost)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    
+
     // Calculate totals
     let totals = session_entries
         .iter()
@@ -63,7 +63,7 @@ pub fn generate_session_report(session_map: SessionUsageMap) -> SessionReport {
             acc.total_cost += session.total_cost;
             acc
         });
-    
+
     SessionReport {
         sessions: session_entries,
         totals: TokenUsageTotals::from(&totals),
@@ -87,7 +87,7 @@ fn parse_session_path(session_path: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, Utc};
+    use chrono::NaiveDate;
     use std::collections::HashMap;
 
     #[test]

@@ -1,6 +1,304 @@
 use crate::models::{DailyReport, SessionReport};
+use chrono::Local;
 use colored::*;
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, Color, Table};
+// use std::io::{self, Write};
+
+pub fn display_daily_report_enhanced(report: &DailyReport) {
+    // Header with timestamp
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("{}", "📊 Claude Code Usage Analytics".bright_blue().bold());
+    println!(
+        "{} Generated at {}",
+        "🕐".bright_yellow(),
+        timestamp.to_string().dimmed()
+    );
+    println!();
+
+    // Quick summary card
+    display_summary_card(&report.totals, report.daily.len());
+    println!();
+
+    // Recent activity (last 7 days)
+    if !report.daily.is_empty() {
+        display_recent_activity(&report.daily);
+        println!();
+    }
+
+    // Detailed table for more than 3 days
+    if report.daily.len() > 3 {
+        println!("{}", "📋 Detailed Daily Breakdown".bright_green().bold());
+        display_daily_table_compact(report);
+    } else if !report.daily.is_empty() {
+        println!("{}", "📋 Daily Usage Details".bright_green().bold());
+        display_daily_cards(&report.daily);
+    }
+}
+
+pub fn display_session_report_enhanced(report: &SessionReport) {
+    // Header with timestamp
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!(
+        "{}",
+        "📊 Claude Code Session Analytics".bright_blue().bold()
+    );
+    println!(
+        "{} Generated at {}",
+        "🕐".bright_yellow(),
+        timestamp.to_string().dimmed()
+    );
+    println!();
+
+    // Quick summary
+    display_session_summary(&report.totals, report.sessions.len());
+    println!();
+
+    // Top sessions
+    display_top_sessions(&report.sessions);
+    println!();
+
+    // Detailed table for many sessions
+    if report.sessions.len() > 5 {
+        println!("{}", "📋 All Sessions".bright_green().bold());
+        display_session_table_compact(report);
+    }
+}
+
+fn display_summary_card(totals: &crate::models::TokenUsageTotals, days_count: usize) {
+    let cost_str = format!("${:.4}", totals.total_cost);
+    let tokens_str = format_number(totals.total_tokens);
+    let input_str = format_number(totals.input_tokens);
+    let output_str = format_number(totals.output_tokens);
+    let cache_str = format_number(totals.cache_creation_tokens + totals.cache_read_tokens);
+
+    // Calculate content width (without colors)
+    let line1_content = format!(
+        "  💰 Total Cost: {}  │  📅 Days: {}  │  🎯 Total Tokens: {}  ",
+        cost_str, days_count, tokens_str
+    );
+    let line2_content = format!(
+        "  📥 Input: {}  │  📤 Output: {}  │  🔄 Cache: {}  ",
+        input_str, output_str, cache_str
+    );
+
+    let content_width =
+        std::cmp::max(line1_content.chars().count(), line2_content.chars().count()) + 2;
+    let border = "─".repeat(content_width);
+
+    println!("{}", format!("┌{}┐", border).bright_black());
+
+    let line1_padding = content_width.saturating_sub(line1_content.chars().count());
+    println!(
+        "{}  💰 Total Cost: {}  │  📅 Days: {}  │  🎯 Total Tokens: {}  {}{}│",
+        "│".bright_black(),
+        cost_str.bright_green().bold(),
+        days_count.to_string().bright_blue().bold(),
+        tokens_str.bright_magenta().bold(),
+        " ".repeat(line1_padding),
+        "│".bright_black()
+    );
+
+    let line2_padding = content_width.saturating_sub(line2_content.chars().count());
+    println!(
+        "{}  📥 Input: {}  │  📤 Output: {}  │  🔄 Cache: {}  {}{}│",
+        "│".bright_black(),
+        input_str.green(),
+        output_str.blue(),
+        cache_str.yellow(),
+        " ".repeat(line2_padding),
+        "│".bright_black()
+    );
+
+    println!("{}", format!("└{}┘", border).bright_black());
+}
+
+fn display_session_summary(totals: &crate::models::TokenUsageTotals, session_count: usize) {
+    let cost_str = format!("${:.4}", totals.total_cost);
+    let tokens_str = format_number(totals.total_tokens);
+
+    // Calculate content width (without colors)
+    let content = format!(
+        "  💰 Total Cost: {}  │  📊 Sessions: {}  │  🎯 Total Tokens: {}  ",
+        cost_str, session_count, tokens_str
+    );
+    let content_width = content.chars().count() + 2;
+    let border = "─".repeat(content_width);
+
+    println!("{}", format!("┌{}┐", border).bright_black());
+
+    let padding = content_width.saturating_sub(content.chars().count());
+    println!(
+        "{}  💰 Total Cost: {}  │  📊 Sessions: {}  │  🎯 Total Tokens: {}  {}{}│",
+        "│".bright_black(),
+        cost_str.bright_green().bold(),
+        session_count.to_string().bright_blue().bold(),
+        tokens_str.bright_magenta().bold(),
+        " ".repeat(padding),
+        "│".bright_black()
+    );
+
+    println!("{}", format!("└{}┘", border).bright_black());
+}
+
+fn display_recent_activity(daily: &[crate::models::DailyUsage]) {
+    println!("{}", "🚀 Recent Activity".bright_cyan().bold());
+    println!();
+
+    let recent_days = daily.iter().take(7);
+    for (i, day) in recent_days.enumerate() {
+        let indicator = if i == 0 { "►" } else { " " };
+        let date_text = if i == 0 {
+            day.date.bright_green().bold()
+        } else {
+            day.date.bright_black()
+        };
+
+        let tokens_str = format_number(day.total_tokens);
+        let cost_str = format!("${:.4}", day.total_cost);
+
+        println!(
+            "{} {} {} {} {} {}",
+            indicator.bright_green(),
+            date_text,
+            "│".bright_black(),
+            format!("{:>12} tokens", tokens_str).bright_white(),
+            "│".bright_black(),
+            format!("{:>8}", cost_str).bright_green()
+        );
+    }
+}
+
+fn display_top_sessions(sessions: &[crate::models::SessionUsage]) {
+    println!("{}", "🏆 Top Sessions by Cost".bright_cyan().bold());
+    println!();
+
+    for (i, session) in sessions.iter().take(5).enumerate() {
+        let medal = match i {
+            0 => "🥇",
+            1 => "🥈",
+            2 => "🥉",
+            _ => "🔸",
+        };
+
+        let session_path = format!("{}/{}", session.project_path, session.session_id);
+        let truncated_path = truncate_path(&session_path, 45);
+        let tokens_str = format_number(session.total_tokens);
+        let cost_str = format!("${:.4}", session.total_cost);
+
+        println!(
+            "{} {:<47} {} {} {} {}",
+            medal,
+            truncated_path.bright_white(),
+            "│".bright_black(),
+            format!("{:>12} tokens", tokens_str).bright_cyan(),
+            "│".bright_black(),
+            format!("{:>8}", cost_str).bright_green()
+        );
+    }
+}
+
+fn display_daily_cards(daily: &[crate::models::DailyUsage]) {
+    for (i, day) in daily.iter().enumerate() {
+        let is_today = i == 0;
+        let date_text = if is_today {
+            day.date.bright_green().bold()
+        } else {
+            day.date.bright_black().bold()
+        };
+        let title_emoji = if is_today { "📅" } else { "📋" };
+
+        let cost_str = format!("${:.4}", day.total_cost);
+        let tokens_str = format_number(day.total_tokens);
+        let input_str = format_number(day.input_tokens);
+        let output_str = format_number(day.output_tokens);
+        let cache_str = format_number(day.cache_creation_tokens + day.cache_read_tokens);
+        let ratio = if day.input_tokens > 0 {
+            day.output_tokens as f64 / day.input_tokens as f64
+        } else {
+            0.0
+        };
+
+        println!("{} {}", title_emoji, date_text);
+        println!(
+            "  💰 Cost: {} │ 🎯 Tokens: {} │ 📊 Ratio: {:.1}:1",
+            cost_str.bright_green(),
+            tokens_str.bright_cyan(),
+            ratio
+        );
+        println!(
+            "  📥 In: {} │ 📤 Out: {} │ 🔄 Cache: {}",
+            input_str.green(),
+            output_str.blue(),
+            cache_str.yellow()
+        );
+
+        if i < daily.len() - 1 {
+            println!();
+        }
+    }
+}
+
+fn display_daily_table_compact(report: &DailyReport) {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_header(vec![
+            Cell::new("Date").fg(Color::Cyan),
+            Cell::new("Cost").fg(Color::Cyan),
+            Cell::new("Tokens").fg(Color::Cyan),
+            Cell::new("Input").fg(Color::Cyan),
+            Cell::new("Output").fg(Color::Cyan),
+            Cell::new("Ratio").fg(Color::Cyan),
+        ]);
+
+    for (i, daily) in report.daily.iter().enumerate() {
+        let date_color = if i == 0 { Color::Green } else { Color::White };
+        let ratio = if daily.input_tokens > 0 {
+            daily.output_tokens as f64 / daily.input_tokens as f64
+        } else {
+            0.0
+        };
+
+        table.add_row(vec![
+            Cell::new(&daily.date).fg(date_color),
+            Cell::new(format!("${:.4}", daily.total_cost)).fg(Color::Green),
+            Cell::new(format_number(daily.total_tokens)).fg(Color::Magenta),
+            Cell::new(format_number(daily.input_tokens)).fg(Color::Blue),
+            Cell::new(format_number(daily.output_tokens)).fg(Color::Cyan),
+            Cell::new(format!("{:.1}:1", ratio)).fg(Color::Yellow),
+        ]);
+    }
+
+    println!("{}", table);
+}
+
+fn display_session_table_compact(report: &SessionReport) {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_header(vec![
+            Cell::new("Session").fg(Color::Cyan),
+            Cell::new("Cost").fg(Color::Cyan),
+            Cell::new("Tokens").fg(Color::Cyan),
+            Cell::new("Activity").fg(Color::Cyan),
+        ]);
+
+    for session in &report.sessions {
+        let session_path = format!("{}/{}", session.project_path, session.session_id);
+        let truncated = truncate_path(&session_path, 30);
+
+        table.add_row(vec![
+            Cell::new(truncated),
+            Cell::new(format!("${:.4}", session.total_cost)).fg(Color::Green),
+            Cell::new(format_number(session.total_tokens)).fg(Color::Magenta),
+            Cell::new(&session.last_activity).fg(Color::Yellow),
+        ]);
+    }
+
+    println!("{}", table);
+}
 
 pub fn display_daily_report_table(report: &DailyReport) {
     let mut table = Table::new();
@@ -116,14 +414,14 @@ fn format_number(num: u64) -> String {
         let num_str = num.to_string();
         let chars: Vec<char> = num_str.chars().collect();
         let mut result = String::new();
-        
+
         for (i, c) in chars.iter().enumerate() {
             if i > 0 && (chars.len() - i) % 3 == 0 {
                 result.push(',');
             }
             result.push(*c);
         }
-        
+
         result
     }
 }
@@ -135,8 +433,6 @@ fn format_currency(amount: f64) -> String {
 fn truncate_path(path: &str, max_length: usize) -> String {
     if path.len() <= max_length {
         path.to_string()
-    } else if path.is_empty() {
-        "-".to_string()
     } else {
         format!("...{}", &path[path.len().saturating_sub(max_length - 3)..])
     }
@@ -156,6 +452,10 @@ pub fn print_warning(message: &str) {
 
 pub fn print_error(message: &str) {
     eprintln!("{} {}", "Error:".red(), message);
+}
+
+pub fn print_info(message: &str) {
+    println!("{} {}", "Info:".blue(), message);
 }
 
 #[cfg(test)]
@@ -179,8 +479,11 @@ mod tests {
     #[test]
     fn test_truncate_path() {
         assert_eq!(truncate_path("short", 10), "short");
-        assert_eq!(truncate_path("this/is/a/very/long/path", 15), "...very/long/path");
-        assert_eq!(truncate_path("", 10), "-");
+        assert_eq!(
+            truncate_path("this/is/a/very/long/path", 15),
+            "...ry/long/path"
+        );
+        assert_eq!(truncate_path("", 10), "");
     }
 
     #[test]

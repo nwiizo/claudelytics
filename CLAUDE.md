@@ -19,11 +19,273 @@ cargo build --release
 cargo run -- daily --help
 cargo run -- session --json
 
-# Run tests
+# Run tests (REQUIRED before commits)
 cargo test
+
+# Format code (REQUIRED before commits)
+cargo fmt
+
+# Check formatting (for CI)
+cargo fmt --check
 
 # Run with release optimizations
 cargo run --release -- daily --since 20240101
+
+# Interactive mode (peco-style session selector)
+cargo run -- interactive
+
+# Watch mode for real-time monitoring
+cargo run -- watch
+
+# Terminal User Interface (TUI) mode
+cargo run -- tui
+cargo run -- --tui                  # Alternative flag format
+
+# Advanced Terminal User Interface (Advanced TUI) mode
+cargo run -- advanced-tui
+cargo run -- --advanced-tui         # Alternative flag format
+
+# Export data to CSV
+cargo run -- export --daily --sessions --summary -o report
+
+# Configuration management
+cargo run -- config --show
+cargo run -- config --set-path /path/to/claude
+
+# Cost display options
+cargo run -- cost                    # Show total cost summary
+cargo run -- cost --today           # Show today's cost only
+cargo run -- cost --date 20240101   # Show cost for specific date
+cargo run -- --today                # Show today's usage data
+cargo run -- daily --today          # Show today's daily report
+
+# Output format options
+cargo run -- daily                  # Enhanced format (default)
+cargo run -- daily --classic        # Classic table format
+cargo run -- daily --json           # JSON output
+cargo run -- session                # Enhanced session view
+cargo run -- session --classic      # Classic session table
+```
+
+## Pre-commit Requirements
+
+**IMPORTANT**: Before committing any changes, you MUST run:
+
+1. `cargo test` - Ensure all tests pass
+2. `cargo fmt` - Format the code according to Rust standards
+
+These checks are enforced in CI/CD and will cause the build to fail if not followed.
+
+## Installation and Shell Integration
+
+### Building and Installing
+
+```bash
+# Build release version
+cargo build --release
+
+# Install to system (requires ~/.cargo/bin in PATH)
+cargo install --path .
+
+# Or copy binary to a directory in your PATH
+sudo cp target/release/claudelytics /usr/local/bin/
+```
+
+### Shell Integration
+
+#### Bash (~/.bashrc or ~/.bash_profile)
+
+```bash
+# Add claudelytics aliases
+alias ctoday='claudelytics cost --today'
+alias csum='claudelytics cost'
+alias cwt='claudelytics --today'
+alias cwatch='claudelytics watch'
+alias cint='claudelytics interactive'
+alias ctui='claudelytics tui'
+alias catui='claudelytics advanced-tui'
+
+# Function to quickly check cost for a specific date
+cdate() {
+    if [ $# -eq 0 ]; then
+        echo "Usage: cdate YYYYMMDD"
+        return 1
+    fi
+    claudelytics cost --date "$1"
+}
+
+# Function to show a quick daily summary
+cdaily() {
+    echo "📊 Claude Usage Summary"
+    claudelytics cost --today
+    echo ""
+    claudelytics --today -j | jq -r '.daily[0] | "Tokens: \(.totalTokens) | Input: \(.inputTokens) | Output: \(.outputTokens)"' 2>/dev/null || claudelytics --today
+}
+
+# Add to PATH if using local build
+export PATH="$HOME/path/to/claudelytics/target/release:$PATH"
+```
+
+#### Fish (~/.config/fish/config.fish)
+
+```fish
+# Add claudelytics aliases
+alias ctoday='claudelytics cost --today'
+alias csum='claudelytics cost'
+alias cwt='claudelytics --today'
+alias cwatch='claudelytics watch'
+alias cint='claudelytics interactive'
+alias ctui='claudelytics tui'
+alias catui='claudelytics advanced-tui'
+
+# Function to quickly check cost for a specific date
+function cdate
+    if test (count $argv) -eq 0
+        echo "Usage: cdate YYYYMMDD"
+        return 1
+    end
+    claudelytics cost --date $argv[1]
+end
+
+# Function to show a quick daily summary
+function cdaily
+    echo "📊 Claude Usage Summary"
+    claudelytics cost --today
+    echo ""
+    claudelytics --today
+end
+
+# Add to PATH if using local build
+set -gx PATH $HOME/path/to/claudelytics/target/release $PATH
+```
+
+#### Zsh (~/.zshrc)
+
+```zsh
+# Add claudelytics aliases
+alias ctoday='claudelytics cost --today'
+alias csum='claudelytics cost'
+alias cwt='claudelytics --today'
+alias cwatch='claudelytics watch'
+alias cint='claudelytics interactive'
+alias ctui='claudelytics tui'
+alias catui='claudelytics advanced-tui'
+
+# Function to quickly check cost for a specific date
+cdate() {
+    if [[ $# -eq 0 ]]; then
+        echo "Usage: cdate YYYYMMDD"
+        return 1
+    fi
+    claudelytics cost --date "$1"
+}
+
+# Function to show a quick daily summary
+cdaily() {
+    echo "📊 Claude Usage Summary"
+    claudelytics cost --today
+    echo ""
+    claudelytics --today -j | jq -r '.daily[0] | "Tokens: \(.totalTokens) | Input: \(.inputTokens) | Output: \(.outputTokens)"' 2>/dev/null || claudelytics --today
+}
+
+# Add to PATH if using local build
+export PATH="$HOME/path/to/claudelytics/target/release:$PATH"
+```
+
+### Quick Commands After Setup
+
+After adding to your shell config and reloading (`source ~/.bashrc`, `source ~/.config/fish/config.fish`, or `source ~/.zshrc`):
+
+```bash
+# Quick today's cost
+ctoday
+
+# Total cost summary
+csum
+
+# Check specific date
+cdate 20241201
+
+# Today's full report
+cwt
+
+# Interactive session browser
+cint
+
+# Enhanced TUI interface
+ctui
+
+# Advanced TUI with professional features
+catui
+
+# Real-time monitoring
+cwatch
+
+# Quick daily summary with tokens
+cdaily
+```
+
+### Advanced Shell Integration
+
+#### Prompt Integration (Show today's cost in prompt)
+
+**Bash prompt with today's cost:**
+```bash
+# Add to ~/.bashrc
+claude_cost_prompt() {
+    local cost=$(claudelytics cost --today 2>/dev/null | grep "Cost:" | awk '{print $2}' | tr -d '$')
+    if [[ -n "$cost" && "$cost" != "0.0000" ]]; then
+        echo " 💰\$${cost}"
+    fi
+}
+
+# Modify your PS1 to include Claude cost
+export PS1='\u@\h:\w$(claude_cost_prompt)\$ '
+```
+
+**Fish prompt with today's cost:**
+```fish
+# Add to ~/.config/fish/functions/fish_prompt.fish
+function claude_cost_prompt
+    set cost (claudelytics cost --today 2>/dev/null | grep "Cost:" | awk '{print $2}' | tr -d '$')
+    if test -n "$cost" -a "$cost" != "0.0000"
+        echo " 💰\$$cost"
+    end
+end
+
+function fish_prompt
+    echo (pwd)(claude_cost_prompt)' $ '
+end
+```
+
+#### Automatic Daily Summary
+
+**Show summary when opening new terminal:**
+```bash
+# Add to ~/.bashrc (bash) or ~/.zshrc (zsh)
+if command -v claudelytics >/dev/null 2>&1; then
+    echo "📊 Today's Claude Usage:"
+    claudelytics cost --today 2>/dev/null || echo "No usage data for today"
+fi
+```
+
+```fish
+# Add to ~/.config/fish/config.fish
+if command -v claudelytics >/dev/null
+    echo "📊 Today's Claude Usage:"
+    claudelytics cost --today 2>/dev/null; or echo "No usage data for today"
+end
+```
+
+#### Weekly Summary Cron Job
+
+```bash
+# Add to crontab (crontab -e)
+# Send weekly summary every Monday at 9 AM
+0 9 * * 1 /usr/local/bin/claudelytics cost | mail -s "Weekly Claude Usage Summary" your-email@example.com
+
+# Or save to file
+0 9 * * 1 /usr/local/bin/claudelytics cost >> ~/claude-weekly-summary.txt
 ```
 
 ## Code Architecture
@@ -34,6 +296,12 @@ cargo run --release -- daily --since 20240101
 - **parser.rs**: JSONL file parsing with parallel processing using rayon
 - **display.rs**: Output formatting (table and JSON) with colored terminal output
 - **reports.rs**: Report generation logic for daily and session analytics
+- **interactive.rs**: peco-style interactive session selector with fuzzy search
+- **tui.rs**: Enhanced terminal user interface with tabs, search, and visual elements
+- **advanced_tui.rs**: Professional-grade advanced TUI with drill-down, comparison, and live monitoring
+- **watcher.rs**: Real-time file monitoring for live usage updates
+- **export.rs**: CSV export functionality for daily, session, and summary reports
+- **config.rs**: Configuration management with YAML-based settings
 
 ### Key Data Flow
 1. **UsageParser** scans `~/.claude/projects/` recursively for `*.jsonl` files
@@ -70,3 +338,40 @@ The tool expects Claude Code JSONL records with this structure:
 - Uses rayon for parallel file processing to handle large datasets efficiently
 - BufReader for memory-efficient JSONL parsing
 - Skips invalid JSON lines silently to handle corrupted data gracefully
+- Real-time file watching with debounced updates to minimize CPU usage
+- Fuzzy search with efficient string matching for interactive mode
+
+### New Features
+- **Interactive Mode**: peco-style fuzzy searchable session selector
+- **Watch Mode**: Real-time monitoring of usage data with automatic updates
+- **Enhanced TUI**: Full-featured terminal interface with tabs, navigation, and visual charts
+- **Advanced TUI**: Professional-grade analytics with drill-down, comparison, and live monitoring
+- **Export Functions**: CSV export for daily, session, and summary reports
+- **Configuration**: YAML-based config file support for persistent settings
+- **Cost Display**: Quick cost summary for today, specific dates, or total usage
+- **Today Filter**: `--today` flag to show only current day's usage
+- **Enhanced Display**: Beautiful card-based layout with visual summaries (default)
+- **Classic Format**: Traditional table format available with `--classic` flag
+- **Enhanced UX**: Colored output, progress indicators, and better error messages
+
+### Enhanced TUI Features (claudelytics tui)
+- **Multi-tab Interface**: Overview, Daily, Sessions, Charts, and Help tabs
+- **Keyboard Navigation**: vim-style (j/k) and arrow key navigation
+- **Visual Elements**: Cost gauges, colored tables, ASCII charts, and formatted cards
+- **Real-time Updates**: Live data display with scroll support
+- **Interactive Tables**: Navigate through daily and session data
+- **Search & Filter**: Real-time search and filtering capabilities
+- **Multiple Sort Options**: Sort by date, cost, tokens, or project
+- **Help System**: Built-in help with keyboard shortcuts
+
+### Advanced TUI Features (claudelytics advanced-tui)
+- **9 Comprehensive Tabs**: Overview, Daily, Sessions, Drill-Down, Compare, Benchmark, Live, Charts, Help
+- **Command Palette**: Quick action access with Ctrl+P and fuzzy search
+- **Session Drill-Down**: Message-level analysis with efficiency metrics and timeline
+- **Session Comparison**: Side-by-side comparison of multiple sessions
+- **Benchmarking**: Performance rankings and optimization recommendations
+- **Live Monitoring**: Real-time metrics with sparklines and activity tracking
+- **Advanced Visualizations**: Heatmaps, trend analysis, and usage patterns
+- **Bookmark System**: Save and organize important sessions
+- **Professional Analytics**: Efficiency scoring, cost optimization tips, and predictions
+- **Enhanced Navigation**: Mouse support, multiple input modes, and sophisticated UI state management
