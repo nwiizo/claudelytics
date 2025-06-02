@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claudelytics is a Rust CLI tool for analyzing Claude Code usage patterns and costs. It parses JSONL files from the `~/.claude/projects/` directory structure and generates comprehensive reports on token usage, costs, and session analytics.
 
+**Current Version**: 0.2.0 - Major feature release with comprehensive analytics data structures
+
 ## Build and Development Commands
 
 ```bash
@@ -44,6 +46,10 @@ cargo run -- --tui                  # Alternative flag format
 # Advanced Terminal User Interface (Advanced TUI) mode
 cargo run -- advanced-tui
 cargo run -- --advanced-tui         # Alternative flag format
+
+# Analytics Studio TUI mode (data science features) - PLANNED
+# cargo run -- analytics-tui         # Comprehensive analytics studio
+# cargo run -- --analytics-tui       # Alternative flag format
 
 # Export data to CSV
 cargo run -- export --daily --sessions --summary -o report
@@ -104,6 +110,7 @@ alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
 alias catui='claudelytics advanced-tui'
+# alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
 cdate() {
@@ -137,6 +144,7 @@ alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
 alias catui='claudelytics advanced-tui'
+# alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
 function cdate
@@ -170,6 +178,7 @@ alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
 alias catui='claudelytics advanced-tui'
+# alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
 cdate() {
@@ -292,7 +301,7 @@ end
 
 ### Module Structure
 - **main.rs**: CLI entry point using clap for argument parsing
-- **models.rs**: Core data structures for usage records, reports, and token aggregation
+- **models.rs**: Core data structures for usage records, reports, token aggregation, and comprehensive analytics
 - **parser.rs**: JSONL file parsing with parallel processing using rayon
 - **display.rs**: Output formatting (table and JSON) with colored terminal output
 - **reports.rs**: Report generation logic for daily and session analytics
@@ -375,3 +384,59 @@ The tool expects Claude Code JSONL records with this structure:
 - **Bookmark System**: Save and organize important sessions
 - **Professional Analytics**: Efficiency scoring, cost optimization tips, and predictions
 - **Enhanced Navigation**: Mouse support, multiple input modes, and sophisticated UI state management
+
+## Advanced Analytics Data Structures (v0.2.0+)
+
+The models.rs module now includes comprehensive data science-grade analytics structures supporting advanced pattern analysis, machine learning insights, and predictive analytics:
+
+### Pattern Analysis & Data Mining
+- **UsagePattern**: Detects and analyzes recurring usage patterns with frequency analysis, time preferences, and efficiency scoring
+- **PatternAnalysis**: Comprehensive pattern detection with anomaly identification and predictability metrics
+- **UsageAnomaly**: Advanced anomaly detection with severity assessment, impact analysis, and causal factor identification
+
+### Productivity Analytics
+- **DeepWorkSession**: Analyzes deep work patterns with focus quality metrics, interruption tracking, and flow state indicators
+- **ContextSwitch**: Tracks project context switches with productivity loss estimation and recovery time analysis
+- **FocusPeriod**: Measures focus intensity with consistency metrics and quality indicators
+- **BreakPattern**: Analyzes break patterns and their impact on productivity with optimal timing recommendations
+- **ProductivityTrend**: Daily, weekly, and seasonal productivity pattern analysis with peak performance identification
+
+### Predictive Analytics & Forecasting
+- **CostForecast**: Multi-timeframe cost prediction (week/month/quarter) with confidence intervals and seasonal adjustments
+- **UsagePrediction**: Peak usage forecasting with saturation point analysis and growth rate tracking
+- **TrendAnalysis**: Micro and macro trend identification with cyclical pattern detection and turning point analysis
+- **BudgetTracker**: Advanced budget management with burn rate tracking, alert systems, and optimization suggestions
+- **RiskAssessment**: Comprehensive risk analysis with probability assessment and mitigation strategies
+
+### Machine Learning Insights
+- **UsageClustering**: Advanced clustering analysis with silhouette scoring and stability metrics
+- **PredictiveModel**: Model performance tracking with accuracy, precision, recall, and F1 scoring
+- **AutomatedInsight**: AI-generated insights with evidence-based recommendations and impact assessments
+- **ModelPerformance**: ML model drift detection and performance trend monitoring
+
+### Interactive Analysis & Data Exploration
+- **TimelineData**: Event-based timeline analysis with trend visualization and seasonal pattern detection
+- **CorrelationMatrix**: Statistical correlation analysis with significance testing and practical interpretation
+- **DrillDownPath**: Multi-dimensional data exploration with breadcrumb navigation and dynamic filtering
+- **AdvancedFilter**: Sophisticated filtering system with regex support, smart suggestions, and saved filter management
+
+### Workflow Integration
+- **GitCorrelation**: Development workflow analysis with commit pattern correlation and code complexity metrics
+- **ProjectMilestone**: Project milestone tracking with efficiency analysis and progress indicators
+- **DevelopmentCycleAnalysis**: Development phase optimization with bottleneck identification and improvement suggestions
+
+### Key Analytics Features
+1. **Pattern Recognition**: Automatic detection of usage patterns, anomalies, and trends
+2. **Predictive Modeling**: Cost forecasting, usage prediction, and risk assessment
+3. **Efficiency Analysis**: Deep work identification, context switch optimization, and productivity enhancement
+4. **Machine Learning**: Clustering analysis, automated insights, and model performance tracking
+5. **Interactive Exploration**: Drill-down analysis, correlation discovery, and dynamic filtering
+6. **Workflow Optimization**: Git integration, milestone tracking, and development cycle analysis
+
+### Analytics Data Model Extensions
+All analytics structures support:
+- **Temporal Analysis**: Time-based pattern recognition and trend analysis
+- **Statistical Significance**: Confidence intervals, p-values, and correlation strength metrics
+- **Performance Metrics**: Efficiency scoring, optimization opportunities, and improvement tracking
+- **Automated Reasoning**: AI-generated insights with evidence-based recommendations
+- **Risk Management**: Probability assessment, impact analysis, and mitigation strategies
