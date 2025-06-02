@@ -1,5 +1,6 @@
 # Claudelytics
 
+[![CI](https://github.com/nwiizo/claudelytics/actions/workflows/ci.yml/badge.svg)](https://github.com/nwiizo/claudelytics/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token consumption, and costs. Get comprehensive insights into your Claude Code usage with beautiful table outputs, interactive session browsers, advanced TUI interfaces, real-time monitoring, and seamless shell integration.
@@ -192,6 +193,9 @@ claudelytics config --reset
 ## 🎨 TUI Interfaces
 
 ### Enhanced TUI (`claudelytics tui`)
+
+![Enhanced TUI Demo](assets/enhanced-tui-demo.gif)
+
 A full-featured terminal interface with:
 
 - **📊 Overview Tab**: Enhanced summary with quick stats and visual elements
