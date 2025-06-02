@@ -32,9 +32,16 @@ A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token c
 
 ## 🚀 Installation
 
-### From Source (Current Method)
+### From Crates.io (Recommended)
 
-Since this tool is currently in development, install from source:
+```bash
+# Install directly from crates.io
+cargo install claudelytics
+```
+
+📦 **Crates.io**: https://crates.io/crates/claudelytics
+
+### From Source
 
 ```bash
 # Clone the repository
