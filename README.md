@@ -5,6 +5,8 @@
 
 A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token consumption, and costs. Get comprehensive insights into your Claude Code usage with beautiful table outputs, interactive session browsers, advanced TUI interfaces, real-time monitoring, and seamless shell integration.
 
+![Enhanced TUI Demo](assets/enhanced-tui-demo.gif)
+
 ## ✨ Features
 
 ### Core Analytics
