@@ -8,7 +8,7 @@ pub struct UsageRecord {
     pub timestamp: DateTime<Utc>,
     pub message: MessageData,
     #[serde(rename = "costUSD")]
-    pub cost_usd: f64,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -47,16 +47,52 @@ impl TokenUsage {
         self.cache_read_tokens += other.cache_read_tokens;
         self.total_cost += other.total_cost;
     }
+
+    /// Calculate cost based on Claude Opus 4 pricing (2025)
+    /// - Input: $15 per million tokens
+    /// - Output: $75 per million tokens  
+    /// - Cache creation: $18.75 per million tokens
+    /// - Cache read: $1.50 per million tokens
+    pub fn calculate_cost(&self) -> f64 {
+        const PRICE_PER_MILLION: f64 = 1_000_000.0;
+        const INPUT_PRICE: f64 = 15.0;
+        const OUTPUT_PRICE: f64 = 75.0;
+        const CACHE_CREATION_PRICE: f64 = 18.75;
+        const CACHE_READ_PRICE: f64 = 1.50;
+
+        let input_cost = (self.input_tokens as f64 / PRICE_PER_MILLION) * INPUT_PRICE;
+        let output_cost = (self.output_tokens as f64 / PRICE_PER_MILLION) * OUTPUT_PRICE;
+        let cache_creation_cost =
+            (self.cache_creation_tokens as f64 / PRICE_PER_MILLION) * CACHE_CREATION_PRICE;
+        let cache_read_cost =
+            (self.cache_read_tokens as f64 / PRICE_PER_MILLION) * CACHE_READ_PRICE;
+
+        input_cost + output_cost + cache_creation_cost + cache_read_cost
+    }
 }
 
 impl From<&UsageRecord> for TokenUsage {
     fn from(record: &UsageRecord) -> Self {
-        TokenUsage {
+        let usage = TokenUsage {
             input_tokens: record.message.usage.input_tokens,
             output_tokens: record.message.usage.output_tokens,
             cache_creation_tokens: record.message.usage.cache_creation_input_tokens,
             cache_read_tokens: record.message.usage.cache_read_input_tokens,
-            total_cost: record.cost_usd,
+            total_cost: 0.0, // Will be set below
+        };
+
+        // Use provided cost if available, otherwise calculate from tokens
+        let cost = match record.cost_usd {
+            Some(cost) => cost,
+            None => usage.calculate_cost(),
+        };
+
+        TokenUsage {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_creation_tokens: usage.cache_creation_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            total_cost: cost,
         }
     }
 }
@@ -1022,4 +1058,76 @@ pub struct DrillDownStep {
     pub result_count: usize,
     pub aggregated_metrics: HashMap<String, f64>,
     pub next_possible_steps: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_calculate_cost() {
+        let usage = TokenUsage {
+            input_tokens: 1_000_000,          // 1M tokens = $15
+            output_tokens: 1_000_000,         // 1M tokens = $75
+            cache_creation_tokens: 1_000_000, // 1M tokens = $18.75
+            cache_read_tokens: 1_000_000,     // 1M tokens = $1.50
+            total_cost: 0.0,
+        };
+
+        let calculated_cost = usage.calculate_cost();
+        assert_eq!(calculated_cost, 110.25); // 15 + 75 + 18.75 + 1.50
+    }
+
+    #[test]
+    fn test_calculate_cost_fractional() {
+        let usage = TokenUsage {
+            input_tokens: 129_470,  // 0.129470M * $15 = $1.94205
+            output_tokens: 973_692, // 0.973692M * $75 = $73.0269
+            cache_creation_tokens: 0,
+            cache_read_tokens: 194_403_239, // 194.403239M * $1.50 = $291.6048585
+            total_cost: 0.0,
+        };
+
+        let calculated_cost = usage.calculate_cost();
+        let expected = 1.94205 + 73.0269 + 291.6048585;
+        assert!((calculated_cost - expected).abs() < 0.0001);
+    }
+
+    #[test]
+    fn test_from_usage_record_with_cost() {
+        let record = UsageRecord {
+            timestamp: chrono::Utc::now(),
+            message: MessageData {
+                usage: Usage {
+                    input_tokens: 100,
+                    output_tokens: 200,
+                    cache_creation_input_tokens: 50,
+                    cache_read_input_tokens: 150,
+                },
+            },
+            cost_usd: Some(5.5),
+        };
+
+        let usage = TokenUsage::from(&record);
+        assert_eq!(usage.total_cost, 5.5); // Should use provided cost
+    }
+
+    #[test]
+    fn test_from_usage_record_without_cost() {
+        let record = UsageRecord {
+            timestamp: chrono::Utc::now(),
+            message: MessageData {
+                usage: Usage {
+                    input_tokens: 1_000_000,
+                    output_tokens: 1_000_000,
+                    cache_creation_input_tokens: 1_000_000,
+                    cache_read_input_tokens: 1_000_000,
+                },
+            },
+            cost_usd: None,
+        };
+
+        let usage = TokenUsage::from(&record);
+        assert_eq!(usage.total_cost, 110.25); // Should calculate cost
+    }
 }
