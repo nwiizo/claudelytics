@@ -8,7 +8,7 @@ pub struct UsageRecord {
     pub timestamp: DateTime<Utc>,
     pub message: MessageData,
     #[serde(rename = "costUSD")]
-    pub cost_usd: f64,
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,7 +56,7 @@ impl From<&UsageRecord> for TokenUsage {
             output_tokens: record.message.usage.output_tokens,
             cache_creation_tokens: record.message.usage.cache_creation_input_tokens,
             cache_read_tokens: record.message.usage.cache_read_input_tokens,
-            total_cost: record.cost_usd,
+            total_cost: record.cost_usd.unwrap_or(0.0),
         }
     }
 }
