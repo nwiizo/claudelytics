@@ -1,11 +1,18 @@
 mod advanced_tui;
 // mod analytics_tui; // Temporarily disabled - work in progress
 mod config;
+mod config_v2;
 mod display;
+mod domain;
+mod error;
 mod export;
 mod interactive;
 mod models;
 mod parser;
+mod performance;
+mod pricing;
+mod pricing_strategies;
+mod processing;
 mod reports;
 mod tui;
 mod watcher;

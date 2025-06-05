@@ -3,11 +3,11 @@ use anyhow::Result;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
-use std::io::{stdout, Write};
+use fuzzy_matcher::skim::SkimMatcherV2;
+use std::io::{Write, stdout};
 
 pub struct InteractiveSelector {
     sessions: Vec<SessionUsage>,

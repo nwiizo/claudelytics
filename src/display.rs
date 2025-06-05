@@ -1,7 +1,7 @@
 use crate::models::{DailyReport, SessionReport};
 use chrono::Local;
 use colored::*;
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL, Cell, Color, Table};
+use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 // use std::io::{self, Write};
 
 pub fn display_daily_report_enhanced(report: &DailyReport) {

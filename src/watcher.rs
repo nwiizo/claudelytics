@@ -57,7 +57,7 @@ impl UsageWatcher {
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     // Periodic refresh every 5 seconds
-                    continue;
+                    self.display_current_usage()?;
                 }
                 Err(e) => {
                     eprintln!("Receiver error: {}", e);

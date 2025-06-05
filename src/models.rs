@@ -5,15 +5,20 @@ use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct UsageRecord {
-    pub timestamp: DateTime<Utc>,
-    pub message: MessageData,
-    #[serde(rename = "costUSD")]
-    pub cost_usd: f64,
+    #[serde(default)]
+    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub message: Option<MessageData>,
+    #[serde(rename = "costUSD", default)]
+    pub cost_usd: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct MessageData {
-    pub usage: Usage,
+    #[serde(default)]
+    pub usage: Option<Usage>,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,14 +54,25 @@ impl TokenUsage {
     }
 }
 
+impl UsageRecord {
+    pub fn get_model_name(&self) -> Option<&str> {
+        self.message.as_ref()?.model.as_deref()
+    }
+}
+
 impl From<&UsageRecord> for TokenUsage {
     fn from(record: &UsageRecord) -> Self {
-        TokenUsage {
-            input_tokens: record.message.usage.input_tokens,
-            output_tokens: record.message.usage.output_tokens,
-            cache_creation_tokens: record.message.usage.cache_creation_input_tokens,
-            cache_read_tokens: record.message.usage.cache_read_input_tokens,
-            total_cost: record.cost_usd,
+        let usage = record.message.as_ref().and_then(|m| m.usage.as_ref());
+
+        match usage {
+            Some(u) => TokenUsage {
+                input_tokens: u.input_tokens,
+                output_tokens: u.output_tokens,
+                cache_creation_tokens: u.cache_creation_input_tokens,
+                cache_read_tokens: u.cache_read_input_tokens,
+                total_cost: record.cost_usd.unwrap_or(0.0),
+            },
+            None => TokenUsage::default(),
         }
     }
 }

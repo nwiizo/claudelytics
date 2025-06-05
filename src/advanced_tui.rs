@@ -11,9 +11,10 @@ use crossterm::{
         MouseButton, MouseEvent, MouseEventKind,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{
+    Frame, Terminal,
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
@@ -21,7 +22,6 @@ use ratatui::{
     widgets::{
         Block, Borders, Cell, Clear, Paragraph, Row, ScrollbarState, Table, TableState, Tabs, Wrap,
     },
-    Frame, Terminal,
 };
 use std::collections::HashMap;
 use std::io;

@@ -1,6 +1,7 @@
 use crate::models::{DailyUsageMap, SessionUsageMap, TokenUsage, UsageRecord};
+use crate::pricing::{PricingFetcher, get_fallback_pricing};
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
+use chrono::{Local, NaiveDate, TimeZone};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs::File;
@@ -12,6 +13,7 @@ pub struct UsageParser {
     claude_dir: PathBuf,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
+    pricing_fetcher: PricingFetcher,
 }
 
 impl UsageParser {
@@ -29,6 +31,7 @@ impl UsageParser {
             claude_dir,
             since,
             until,
+            pricing_fetcher: PricingFetcher::new(),
         })
     }
 
@@ -125,24 +128,44 @@ impl UsageParser {
 
             match serde_json::from_str::<UsageRecord>(&line) {
                 Ok(record) => {
-                    if self.should_include_record(&record) {
-                        let usage = TokenUsage::from(&record);
-                        let date = record.timestamp.date_naive();
+                    // Skip records without timestamp or usage data
+                    if let Some(timestamp) = record.timestamp {
+                        if record
+                            .message
+                            .as_ref()
+                            .and_then(|m| m.usage.as_ref())
+                            .is_some()
+                        {
+                            if self.should_include_record(&record) {
+                                let mut usage = TokenUsage::from(&record);
 
-                        daily_map
-                            .entry(date)
-                            .or_insert_with(TokenUsage::default)
-                            .add(&usage);
+                                // Calculate cost if not provided
+                                if usage.total_cost == 0.0 {
+                                    if let Some(model_name) = record.get_model_name() {
+                                        usage.total_cost =
+                                            self.calculate_cost_for_record(&record, model_name);
+                                    }
+                                }
 
-                        session_map
-                            .entry(session_info.clone())
-                            .or_insert((TokenUsage::default(), record.timestamp))
-                            .0
-                            .add(&usage);
+                                let date =
+                                    Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
 
-                        let session_entry = session_map.get_mut(&session_info).unwrap();
-                        if record.timestamp > session_entry.1 {
-                            session_entry.1 = record.timestamp;
+                                daily_map
+                                    .entry(date)
+                                    .or_insert_with(TokenUsage::default)
+                                    .add(&usage);
+
+                                session_map
+                                    .entry(session_info.clone())
+                                    .or_insert((TokenUsage::default(), timestamp))
+                                    .0
+                                    .add(&usage);
+
+                                let session_entry = session_map.get_mut(&session_info).unwrap();
+                                if timestamp > session_entry.1 {
+                                    session_entry.1 = timestamp;
+                                }
+                            }
                         }
                     }
                 }
@@ -182,7 +205,11 @@ impl UsageParser {
     }
 
     fn should_include_record(&self, record: &UsageRecord) -> bool {
-        let date = record.timestamp.date_naive();
+        let timestamp = match record.timestamp {
+            Some(ts) => ts,
+            None => return false,
+        };
+        let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
 
         if let Some(since) = self.since {
             if date < since {
@@ -197,6 +224,28 @@ impl UsageParser {
         }
 
         true
+    }
+
+    fn calculate_cost_for_record(&self, record: &UsageRecord, model_name: &str) -> f64 {
+        // Use fallback pricing for now - online fetching would be added as async feature
+        let fallback_pricing = get_fallback_pricing();
+
+        if let Some(pricing) = self
+            .pricing_fetcher
+            .get_model_pricing(&fallback_pricing, model_name)
+        {
+            if let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref()) {
+                return self.pricing_fetcher.calculate_cost(
+                    &pricing,
+                    usage.input_tokens,
+                    usage.output_tokens,
+                    usage.cache_creation_input_tokens,
+                    usage.cache_read_input_tokens,
+                );
+            }
+        }
+
+        0.0
     }
 }
 
