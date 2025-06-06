@@ -1,5 +1,7 @@
 # Claudelytics
 
+> ⚠️ **BETA SOFTWARE**: This is pre-release software under active development. Features may change, and bugs may exist. Please report issues on GitHub.
+
 [![CI](https://github.com/nwiizo/claudelytics/actions/workflows/ci.yml/badge.svg)](https://github.com/nwiizo/claudelytics/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 

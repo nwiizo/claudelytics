@@ -135,36 +135,34 @@ impl UsageParser {
                             .as_ref()
                             .and_then(|m| m.usage.as_ref())
                             .is_some()
+                            && self.should_include_record(&record)
                         {
-                            if self.should_include_record(&record) {
-                                let mut usage = TokenUsage::from(&record);
+                            let mut usage = TokenUsage::from(&record);
 
-                                // Calculate cost if not provided
-                                if usage.total_cost == 0.0 {
-                                    if let Some(model_name) = record.get_model_name() {
-                                        usage.total_cost =
-                                            self.calculate_cost_for_record(&record, model_name);
-                                    }
+                            // Calculate cost if not provided
+                            if usage.total_cost == 0.0 {
+                                if let Some(model_name) = record.get_model_name() {
+                                    usage.total_cost =
+                                        self.calculate_cost_for_record(&record, model_name);
                                 }
+                            }
 
-                                let date =
-                                    Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+                            let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
 
-                                daily_map
-                                    .entry(date)
-                                    .or_insert_with(TokenUsage::default)
-                                    .add(&usage);
+                            daily_map
+                                .entry(date)
+                                .or_insert_with(TokenUsage::default)
+                                .add(&usage);
 
-                                session_map
-                                    .entry(session_info.clone())
-                                    .or_insert((TokenUsage::default(), timestamp))
-                                    .0
-                                    .add(&usage);
+                            session_map
+                                .entry(session_info.clone())
+                                .or_insert((TokenUsage::default(), timestamp))
+                                .0
+                                .add(&usage);
 
-                                let session_entry = session_map.get_mut(&session_info).unwrap();
-                                if timestamp > session_entry.1 {
-                                    session_entry.1 = timestamp;
-                                }
+                            let session_entry = session_map.get_mut(&session_info).unwrap();
+                            if timestamp > session_entry.1 {
+                                session_entry.1 = timestamp;
                             }
                         }
                     }

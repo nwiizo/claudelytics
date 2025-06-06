@@ -39,13 +39,12 @@ cargo run -- interactive
 # Watch mode for real-time monitoring
 cargo run -- watch
 
-# Terminal User Interface (TUI) mode
+# Enhanced Terminal User Interface (TUI) mode
 cargo run -- tui
 cargo run -- --tui                  # Alternative flag format
 
-# Advanced Terminal User Interface (Advanced TUI) mode
-cargo run -- advanced-tui
-cargo run -- --advanced-tui         # Alternative flag format
+# Resume last TUI session
+cargo run -- --resume               # Resume last TUI session with saved state
 
 # Analytics Studio TUI mode (data science features) - PLANNED
 # cargo run -- analytics-tui         # Comprehensive analytics studio
@@ -109,7 +108,7 @@ alias cwt='claudelytics --today'
 alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
-alias catui='claudelytics advanced-tui'
+alias cresume='claudelytics --resume'
 # alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
@@ -143,7 +142,7 @@ alias cwt='claudelytics --today'
 alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
-alias catui='claudelytics advanced-tui'
+alias cresume='claudelytics --resume'
 # alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
@@ -177,7 +176,7 @@ alias cwt='claudelytics --today'
 alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
-alias catui='claudelytics advanced-tui'
+alias cresume='claudelytics --resume'
 # alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
@@ -221,11 +220,11 @@ cwt
 # Interactive session browser
 cint
 
-# Enhanced TUI interface
+# Enhanced TUI interface with advanced features
 ctui
 
-# Advanced TUI with professional features
-catui
+# Resume last TUI session  
+cresume
 
 # Real-time monitoring
 cwatch
@@ -306,8 +305,7 @@ end
 - **display.rs**: Output formatting (table and JSON) with colored terminal output
 - **reports.rs**: Report generation logic for daily and session analytics
 - **interactive.rs**: peco-style interactive session selector with fuzzy search
-- **tui.rs**: Enhanced terminal user interface with tabs, search, and visual elements
-- **advanced_tui.rs**: Professional-grade advanced TUI with drill-down, comparison, and live monitoring
+- **tui.rs**: Enhanced terminal user interface with advanced features, command palette, bookmarks, and session comparison
 - **watcher.rs**: Real-time file monitoring for live usage updates
 - **export.rs**: CSV export functionality for daily, session, and summary reports
 - **config.rs**: Configuration management with YAML-based settings
@@ -353,8 +351,7 @@ The tool expects Claude Code JSONL records with this structure:
 ### New Features
 - **Interactive Mode**: peco-style fuzzy searchable session selector
 - **Watch Mode**: Real-time monitoring of usage data with automatic updates
-- **Enhanced TUI**: Full-featured terminal interface with tabs, navigation, and visual charts
-- **Advanced TUI**: Professional-grade analytics with drill-down, comparison, and live monitoring
+- **Enhanced TUI**: Full-featured terminal interface with advanced analytics, command palette, bookmarks, and session comparison
 - **Export Functions**: CSV export for daily, session, and summary reports
 - **Configuration**: YAML-based config file support for persistent settings
 - **Cost Display**: Quick cost summary for today, specific dates, or total usage
@@ -364,26 +361,20 @@ The tool expects Claude Code JSONL records with this structure:
 - **Enhanced UX**: Colored output, progress indicators, and better error messages
 
 ### Enhanced TUI Features (claudelytics tui)
-- **Multi-tab Interface**: Overview, Daily, Sessions, Charts, and Help tabs
+- **Multi-tab Interface**: Overview, Daily, Sessions, Charts, Resume, and Help tabs
+- **Command Palette**: Quick action access with Ctrl+P and fuzzy search
+- **Bookmark System**: Save and organize important sessions with 'b' key
+- **Session Comparison**: Mark sessions for comparison with 'x' key  
+- **Efficiency Sorting**: Sort sessions by efficiency (tokens per dollar)
+- **Resume Tab**: View recent sessions, bookmarks, and session history
 - **Keyboard Navigation**: vim-style (j/k) and arrow key navigation
 - **Visual Elements**: Cost gauges, colored tables, ASCII charts, and formatted cards
 - **Real-time Updates**: Live data display with scroll support
 - **Interactive Tables**: Navigate through daily and session data
 - **Search & Filter**: Real-time search and filtering capabilities
-- **Multiple Sort Options**: Sort by date, cost, tokens, or project
+- **Multiple Sort Options**: Sort by date, cost, tokens, efficiency, or project
 - **Help System**: Built-in help with keyboard shortcuts
 
-### Advanced TUI Features (claudelytics advanced-tui)
-- **9 Comprehensive Tabs**: Overview, Daily, Sessions, Drill-Down, Compare, Benchmark, Live, Charts, Help
-- **Command Palette**: Quick action access with Ctrl+P and fuzzy search
-- **Session Drill-Down**: Message-level analysis with efficiency metrics and timeline
-- **Session Comparison**: Side-by-side comparison of multiple sessions
-- **Benchmarking**: Performance rankings and optimization recommendations
-- **Live Monitoring**: Real-time metrics with sparklines and activity tracking
-- **Advanced Visualizations**: Heatmaps, trend analysis, and usage patterns
-- **Bookmark System**: Save and organize important sessions
-- **Professional Analytics**: Efficiency scoring, cost optimization tips, and predictions
-- **Enhanced Navigation**: Mouse support, multiple input modes, and sophisticated UI state management
 
 ## Advanced Analytics Data Structures (v0.2.0+)
 

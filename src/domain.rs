@@ -43,6 +43,7 @@ pub struct TokenUsage {
     pub cache_read_tokens: TokenCount,
 }
 
+#[allow(dead_code)]
 impl TokenUsage {
     pub fn new(input: u64, output: u64, cache_creation: u64, cache_read: u64) -> Self {
         Self {
@@ -74,6 +75,7 @@ impl Default for TokenUsage {
 }
 
 // ドメインイベント: 使用状況の記録
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct UsageEvent {
     pub timestamp: DateTime<Utc>,
@@ -83,6 +85,7 @@ pub struct UsageEvent {
     pub cost: Option<Cost>,
 }
 
+#[allow(dead_code)]
 impl UsageEvent {
     pub fn new(timestamp: DateTime<Utc>, token_usage: TokenUsage, session_id: SessionId) -> Self {
         Self {
@@ -116,6 +119,7 @@ pub struct UsageMetrics {
     pub total_cost: Cost,
 }
 
+#[allow(dead_code)]
 impl UsageMetrics {
     pub fn new(token_usage: TokenUsage, cost: Cost) -> Self {
         Self {
@@ -154,6 +158,7 @@ pub struct DailyUsageReport {
     pub session_count: usize,
 }
 
+#[allow(dead_code)]
 impl DailyUsageReport {
     pub fn new(date: NaiveDate, metrics: UsageMetrics, session_count: usize) -> Self {
         Self {
@@ -173,6 +178,7 @@ pub struct SessionUsageReport {
     pub model: Option<ModelName>,
 }
 
+#[allow(dead_code)]
 impl SessionUsageReport {
     pub fn new(session_id: SessionId, metrics: UsageMetrics, last_activity: DateTime<Utc>) -> Self {
         Self {

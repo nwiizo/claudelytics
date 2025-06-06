@@ -1,7 +1,7 @@
 class Claudelytics < Formula
   desc "Claude Code usage analytics tool with TUI interface"
   homepage "https://github.com/nwiizo/claudelytics"
-  version "0.1.0"
+  version "0.3.0"
   license "MIT"
 
   on_macos do

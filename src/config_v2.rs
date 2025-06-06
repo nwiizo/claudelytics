@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// 完全な設定構造体 - アプリケーション全体の設定を管理
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct AppConfig {
     /// 基本設定
     pub core: CoreConfig,
@@ -157,19 +157,6 @@ pub enum PricingStrategy {
 
 // Default implementations
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            core: CoreConfig::default(),
-            display: DisplayConfig::default(),
-            performance: PerformanceConfig::default(),
-            pricing: PricingConfig::default(),
-            export: ExportConfig::default(),
-            profiles: HashMap::new(),
-        }
-    }
-}
-
 impl Default for CoreConfig {
     fn default() -> Self {
         Self {
@@ -266,6 +253,7 @@ impl fmt::Display for DefaultCommand {
 
 // Configuration management
 
+#[allow(dead_code)]
 impl AppConfig {
     /// 設定をロード（環境変数、設定ファイル、デフォルト値の順で優先）
     pub fn load() -> Result<Self> {

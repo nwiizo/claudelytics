@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::path::Path;
 
 /// 価格計算戦略の実装
-
 /// デフォルトの価格情報を提供する戦略
 #[derive(Debug)]
 pub struct FallbackPricingStrategy {
@@ -141,6 +140,7 @@ pub struct ConfigurablePricingModel {
     pub aliases: Option<Vec<String>>,
 }
 
+#[allow(dead_code)]
 impl ConfigurablePricingStrategy {
     pub fn new() -> Self {
         Self {
@@ -170,7 +170,7 @@ impl ConfigurablePricingStrategy {
         }
 
         // エイリアスマッチング
-        for (_, pricing) in &self.pricing_data {
+        for pricing in self.pricing_data.values() {
             if let Some(aliases) = &pricing.aliases {
                 if aliases.iter().any(|alias| alias == model_name) {
                     return Some(pricing);
@@ -258,8 +258,10 @@ impl CostCalculator for CompositeCostCalculator {
 }
 
 /// 価格計算戦略のファクトリー
+#[allow(dead_code)]
 pub struct CostCalculatorFactory;
 
+#[allow(dead_code)]
 impl CostCalculatorFactory {
     /// デフォルトの価格計算戦略を作成
     pub fn create_default() -> Box<dyn CostCalculator + Send + Sync> {

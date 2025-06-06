@@ -11,6 +11,7 @@ use walkdir::WalkDir;
 
 /// JSONLファイルから読み込む生データ
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct RawUsageRecord {
     #[serde(default)]
     pub timestamp: Option<DateTime<Utc>>,
@@ -21,6 +22,7 @@ pub struct RawUsageRecord {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct RawMessageData {
     #[serde(default)]
     pub usage: Option<RawUsage>,
@@ -29,6 +31,7 @@ pub struct RawMessageData {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct RawUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -39,10 +42,12 @@ pub struct RawUsage {
 }
 
 /// ファイル処理を担当するコンポーネント
+#[allow(dead_code)]
 pub struct FileProcessor {
     claude_dir: PathBuf,
 }
 
+#[allow(dead_code)]
 impl FileProcessor {
     pub fn new(claude_dir: PathBuf) -> Self {
         Self { claude_dir }
@@ -78,7 +83,7 @@ impl FileProcessor {
 
     /// ファイルからレコードのストリームを作成
     pub fn read_records(&self, file_path: &Path) -> Result<Vec<RawUsageRecord>> {
-        let file = File::open(file_path).map_err(|e| ClaudelyticsError::Io(e))?;
+        let file = File::open(file_path).map_err(ClaudelyticsError::Io)?;
         let reader = BufReader::new(file);
 
         let mut records = Vec::new();
@@ -142,11 +147,13 @@ impl FileProcessor {
 }
 
 /// レコード検証を担当するコンポーネント
+#[allow(dead_code)]
 pub struct RecordValidator {
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
 }
 
+#[allow(dead_code)]
 impl RecordValidator {
     pub fn new(since: Option<NaiveDate>, until: Option<NaiveDate>) -> Result<Self> {
         if let (Some(since), Some(until)) = (since, until) {
@@ -203,10 +210,12 @@ impl RecordValidator {
 }
 
 /// 生データをドメインオブジェクトに変換
+#[allow(dead_code)]
 pub struct RecordConverter {
     cost_calculator: Box<dyn CostCalculator + Send + Sync>,
 }
 
+#[allow(dead_code)]
 impl RecordConverter {
     pub fn new(cost_calculator: Box<dyn CostCalculator + Send + Sync>) -> Self {
         Self { cost_calculator }
@@ -253,8 +262,10 @@ impl RecordConverter {
 }
 
 /// データ集約を担当するコンポーネント
+#[allow(dead_code)]
 pub struct DataAggregator;
 
+#[allow(dead_code)]
 impl DataAggregator {
     pub fn aggregate_by_date(events: Vec<UsageEvent>) -> HashMap<NaiveDate, UsageMetrics> {
         let mut daily_metrics = HashMap::new();
@@ -298,12 +309,14 @@ impl DataAggregator {
 }
 
 /// 並列処理を管理するコンポーネント
+#[allow(dead_code)]
 pub struct ParallelProcessor {
     file_processor: FileProcessor,
     validator: RecordValidator,
     converter: RecordConverter,
 }
 
+#[allow(dead_code)]
 impl ParallelProcessor {
     pub fn new(
         claude_dir: PathBuf,
@@ -323,6 +336,7 @@ impl ParallelProcessor {
     }
 
     /// すべてのファイルを並列処理
+    #[allow(clippy::type_complexity)]
     pub fn process_all_files(
         &self,
     ) -> Result<(
@@ -377,6 +391,7 @@ impl ParallelProcessor {
 }
 
 /// 日付パースのユーティリティ
+#[allow(dead_code)]
 pub fn parse_date(date_str: &str) -> Result<NaiveDate> {
     if date_str.len() != 8 {
         return Err(ClaudelyticsError::date_parse_error(date_str, "YYYYMMDD"));

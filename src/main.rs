@@ -1,5 +1,9 @@
-mod advanced_tui;
-// mod analytics_tui; // Temporarily disabled - work in progress
+//! Claudelytics - Claude Code Usage Analytics Tool
+//!
+//! A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs.
+//! Parses JSONL files from ~/.claude/projects/ and generates comprehensive reports.
+
+// Module declarations
 mod config;
 mod config_v2;
 mod display;
@@ -14,11 +18,11 @@ mod pricing;
 mod pricing_strategies;
 mod processing;
 mod reports;
+mod state;
 mod tui;
 mod watcher;
 
-use advanced_tui::AdvancedTuiApp;
-// use analytics_tui::AnalyticsTuiApp; // Temporarily disabled - work in progress
+// Core dependencies
 use anyhow::Result;
 use chrono::Local;
 use clap::{Parser, Subcommand};
@@ -32,6 +36,7 @@ use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv}
 use interactive::InteractiveSelector;
 use parser::UsageParser;
 use reports::{generate_daily_report, generate_session_report};
+use state::{TuiMode, TuiSessionState};
 use std::path::PathBuf;
 use tui::TuiApp;
 use watcher::UsageWatcher;
@@ -122,13 +127,6 @@ struct Cli {
         long_help = "Launch interactive terminal user interface (TUI)\nFeatures: Navigation, search, charts, multiple tabs\nKeyboard shortcuts: j/k navigation, q to quit, ? for help"
     )]
     tui: bool,
-
-    #[arg(
-        long,
-        help = "Launch advanced terminal user interface",
-        long_help = "Launch professional-grade advanced TUI with analytics\nFeatures: Drill-down, comparison, benchmarking, live monitoring\nKeyboard shortcuts: Ctrl+P command palette, mouse support"
-    )]
-    advanced_tui: bool,
     // #[arg(long, help = "Launch analytics studio TUI", long_help = "Launch comprehensive analytics studio with AI insights\nFeatures: Pattern analysis, predictive modeling, ML insights, risk management\nKeyboard shortcuts: F10-F12 for analytics tabs, advanced data exploration")]
     // analytics_tui: bool, // Temporarily disabled - work in progress
 }
@@ -174,11 +172,6 @@ enum Commands {
         long_about = "Launch interactive terminal user interface\n\nFull-featured TUI with multiple tabs, navigation, and visual charts.\nProvides comprehensive analysis in a terminal-based interface.\n\nFEATURES:\n  - Multiple tabs: Overview, Daily, Sessions, Charts, Help\n  - Keyboard navigation (j/k, arrows, Enter, Tab)\n  - Visual elements: gauges, charts, formatted tables\n  - Search and filtering capabilities\n  - Real-time data display\n\nKEYBOARD SHORTCUTS:\n  q/Esc: Quit  Tab: Next tab  j/k: Navigate  Enter: Select\n\nEXAMPLE:\n  claudelytics tui                      # Launch TUI"
     )]
     Tui,
-    #[command(about = "Launch advanced terminal user interface")]
-    #[command(
-        long_about = "Launch professional-grade advanced TUI with analytics\n\nComprehensive analytics interface with drill-down capabilities,\nsession comparison, benchmarking, and live monitoring.\n\nFEATURES:\n  - 9 specialized tabs with advanced analytics\n  - Session drill-down with message-level analysis\n  - Side-by-side session comparison\n  - Performance benchmarking and optimization tips\n  - Live monitoring with sparklines\n  - Command palette (Ctrl+P) with fuzzy search\n  - Mouse support and professional UI\n\nKEYBOARD SHORTCUTS:\n  Ctrl+P: Command palette  Mouse: Click navigation\n  All standard TUI shortcuts apply\n\nEXAMPLE:\n  claudelytics advanced-tui             # Launch Advanced TUI"
-    )]
-    AdvancedTui,
     // #[command(about = "Launch analytics studio TUI")]
     // #[command(long_about = "Launch comprehensive analytics studio with AI insights\n\nData science-grade analytics interface with 17 specialized tabs,\npattern analysis, predictive modeling, and machine learning insights.\n\nFEATURES:\n  - 17 specialized analytics tabs\n  - Usage pattern detection and clustering\n  - Productivity analytics with deep work analysis\n  - Predictive cost forecasting and trend analysis\n  - Risk management with budget tracking\n  - Workflow integration (Git, projects, milestones)\n  - AI-powered insights and recommendations\n  - Interactive data exploration with correlation analysis\n  - Advanced search with smart suggestions\n  - Custom dashboards and personalization\n\nKEYBOARD SHORTCUTS:\n  F10-F12: Analytics tabs  Ctrl+F: Advanced search\n  Ctrl+D: Custom dashboard  All advanced TUI shortcuts apply\n\nEXAMPLE:\n  claudelytics analytics-tui            # Launch Analytics Studio")]
     // AnalyticsTui, // Temporarily disabled - work in progress
@@ -255,8 +248,15 @@ enum Commands {
         )]
         date: Option<String>,
     },
+    #[command(about = "Debug resume state")]
+    #[command(long_about = "Debug command to show TUI session state information")]
+    DebugState,
+    #[command(about = "Test resume functionality")]
+    #[command(long_about = "Test command to verify resume functionality without starting TUI")]
+    TestResume,
 }
 
+/// Application entry point
 fn main() {
     if let Err(e) = run() {
         print_error(&format!("{}", e));
@@ -264,6 +264,7 @@ fn main() {
     }
 }
 
+/// Main application logic
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
@@ -352,16 +353,33 @@ fn run() -> Result<()> {
         return handle_cost_command(&daily_report, *today, date.as_deref());
     }
 
+    // Handle debug state command
+    if let Some(Commands::DebugState) = &cli.command {
+        return handle_debug_state_command();
+    }
+
+    // Handle test resume command
+    if let Some(Commands::TestResume) = &cli.command {
+        return handle_test_resume_command(daily_report, session_report);
+    }
+
     // Handle TUI flag or command
     if cli.tui {
         let mut tui_app = TuiApp::new(daily_report, session_report);
-        return tui_app.run();
-    }
 
-    // Handle Advanced TUI flag
-    if cli.advanced_tui {
-        let mut advanced_tui_app = AdvancedTuiApp::new(daily_report, session_report);
-        return advanced_tui_app.run();
+        // Try to restore previous session state
+        if let Ok(state) = TuiSessionState::load() {
+            if state.should_resume() {
+                restore_tui_state(&mut tui_app, &state);
+                tui_app.set_restored_state();
+            }
+        }
+
+        let result = tui_app.run();
+
+        // Save final state on exit
+        save_tui_state(&tui_app, TuiMode::Basic).ok();
+        return result;
     }
 
     // Handle Analytics TUI flag (temporarily disabled)
@@ -415,11 +433,19 @@ fn run() -> Result<()> {
         }
         Commands::Tui => {
             let mut tui_app = TuiApp::new(daily_report, session_report);
-            tui_app.run()?;
-        }
-        Commands::AdvancedTui => {
-            let mut advanced_tui_app = AdvancedTuiApp::new(daily_report, session_report);
-            advanced_tui_app.run()?;
+
+            // Try to restore previous session state
+            if let Ok(state) = TuiSessionState::load() {
+                if state.should_resume() {
+                    restore_tui_state(&mut tui_app, &state);
+                    tui_app.set_restored_state();
+                }
+            }
+
+            let result = tui_app.run();
+
+            save_tui_state(&tui_app, TuiMode::Basic).ok();
+            result?;
         }
         // Commands::AnalyticsTui => {
         //     let mut analytics_tui_app = AnalyticsTuiApp::new(daily_report, session_report);
@@ -431,6 +457,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
+/// Handle configuration management commands
 fn handle_config_command(
     config: &mut Config,
     show: bool,
@@ -465,6 +492,7 @@ fn handle_config_command(
     Ok(())
 }
 
+/// Handle data export commands
 fn handle_export_command(
     daily_report: &crate::models::DailyReport,
     session_report: &crate::models::SessionReport,
@@ -512,6 +540,7 @@ fn handle_export_command(
     Ok(())
 }
 
+/// Handle cost summary commands
 fn handle_cost_command(
     daily_report: &crate::models::DailyReport,
     today_only: bool,
@@ -558,6 +587,191 @@ fn handle_cost_command(
         if let Some(latest) = daily_report.daily.first() {
             println!("Latest usage: {} (${:.4})", latest.date, latest.total_cost);
         }
+    }
+
+    Ok(())
+}
+
+/// Save TUI session state for resume functionality
+fn save_tui_state(tui_app: &TuiApp, mode: TuiMode) -> Result<()> {
+    let mut state = TuiSessionState::load().unwrap_or_default();
+    state.mode = mode;
+    state.update_timestamp();
+
+    // Extract actual state from TUI app
+    state.last_tab = Some(tui_app.get_current_tab_index());
+    state.last_search_query = if tui_app.get_search_query().is_empty() {
+        None
+    } else {
+        Some(tui_app.get_search_query())
+    };
+    state.bookmarked_sessions = tui_app.get_bookmarked_sessions();
+    state.comparison_sessions = tui_app.get_comparison_sessions();
+    state.last_session_path = tui_app.get_selected_session_path();
+
+    state.save()
+}
+
+/// Restore TUI session state from saved data
+fn restore_tui_state(tui_app: &mut TuiApp, state: &TuiSessionState) {
+    // Silently restore state without logging
+
+    // Restore last active tab
+    if let Some(tab_index) = state.last_tab {
+        tui_app.set_current_tab(tab_index);
+    }
+
+    // Restore search query
+    if let Some(ref search_query) = state.last_search_query {
+        tui_app.set_search_query(search_query.clone());
+    }
+
+    // Restore bookmarked sessions
+    if !state.bookmarked_sessions.is_empty() {
+        tui_app.set_bookmarked_sessions(state.bookmarked_sessions.clone());
+    }
+
+    // Restore comparison sessions
+    if !state.comparison_sessions.is_empty() {
+        tui_app.set_comparison_sessions(state.comparison_sessions.clone());
+    }
+
+    // Restore last selected session
+    if let Some(ref session_path) = state.last_session_path {
+        tui_app.restore_session_selection(Some(session_path.clone()));
+    }
+}
+
+/// Handle debug state command to show current TUI session state
+fn handle_debug_state_command() -> Result<()> {
+    let state = TuiSessionState::load().unwrap_or_default();
+
+    println!("🔧 TUI Session State Debug Information");
+    println!("=====================================");
+    println!("Mode: {:?}", state.mode);
+    println!("Last Tab: {:?}", state.last_tab);
+    println!("Last Session Path: {:?}", state.last_session_path);
+    println!("Last Search Query: {:?}", state.last_search_query);
+    println!(
+        "Bookmarked Sessions: {} items",
+        state.bookmarked_sessions.len()
+    );
+    for (i, bookmark) in state.bookmarked_sessions.iter().enumerate() {
+        println!("  {}. {}", i + 1, bookmark);
+    }
+    println!(
+        "Comparison Sessions: {} items",
+        state.comparison_sessions.len()
+    );
+    for (i, comparison) in state.comparison_sessions.iter().enumerate() {
+        println!("  {}. {}", i + 1, comparison);
+    }
+    println!("Timestamp: {}", state.timestamp);
+    println!("Should Resume: {}", state.should_resume());
+
+    let state_path = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    let state_file = format!("{}/.claude/claudelytics/tui_session.json", state_path);
+    println!("State File: {}", state_file);
+
+    if std::path::Path::new(&state_file).exists() {
+        println!("\n📄 Raw State File Content:");
+        if let Ok(content) = std::fs::read_to_string(&state_file) {
+            println!("{}", content);
+        }
+    } else {
+        println!("❌ State file does not exist");
+    }
+
+    Ok(())
+}
+
+/// Handle test resume command to verify resume functionality
+fn handle_test_resume_command(
+    daily_report: crate::models::DailyReport,
+    session_report: crate::models::SessionReport,
+) -> Result<()> {
+    print_info("🧪 Testing resume functionality...");
+
+    // Create a test TUI app and set some state
+    let mut tui_app = TuiApp::new(daily_report, session_report);
+
+    // Set some test state
+    tui_app.set_current_tab(2); // Sessions tab
+    tui_app.set_search_query("test_query".to_string());
+    tui_app.set_bookmarked_sessions(vec![
+        "test/bookmark1".to_string(),
+        "test/bookmark2".to_string(),
+    ]);
+    tui_app.set_comparison_sessions(vec!["test/comparison1".to_string()]);
+
+    print_info("  ✓ Set test state in TUI app");
+
+    // Save the state
+    if let Err(e) = save_tui_state(&tui_app, TuiMode::Basic) {
+        print_error(&format!("Failed to save state: {}", e));
+        return Err(e);
+    }
+    print_info("  ✓ Saved test state");
+
+    // Load the state back
+    let loaded_state = TuiSessionState::load()?;
+    print_info("  ✓ Loaded state back");
+
+    // Create a new TUI app and restore state
+    let mut new_tui_app = TuiApp::new(
+        tui_app.get_daily_report().clone(),
+        tui_app.get_session_report().clone(),
+    );
+    restore_tui_state(&mut new_tui_app, &loaded_state);
+
+    // Verify state was restored correctly
+    let restored_tab = new_tui_app.get_current_tab_index();
+    let restored_query = new_tui_app.get_search_query();
+    let restored_bookmarks = new_tui_app.get_bookmarked_sessions();
+    let restored_comparisons = new_tui_app.get_comparison_sessions();
+
+    println!("🔍 Verification Results:");
+    println!(
+        "  Tab: {} (expected: 2) {}",
+        restored_tab,
+        if restored_tab == 2 { "✓" } else { "❌" }
+    );
+    println!(
+        "  Search: '{}' (expected: 'test_query') {}",
+        restored_query,
+        if restored_query == "test_query" {
+            "✓"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  Bookmarks: {} (expected: 2) {}",
+        restored_bookmarks.len(),
+        if restored_bookmarks.len() == 2 {
+            "✓"
+        } else {
+            "❌"
+        }
+    );
+    println!(
+        "  Comparisons: {} (expected: 1) {}",
+        restored_comparisons.len(),
+        if restored_comparisons.len() == 1 {
+            "✓"
+        } else {
+            "❌"
+        }
+    );
+
+    if restored_tab == 2
+        && restored_query == "test_query"
+        && restored_bookmarks.len() == 2
+        && restored_comparisons.len() == 1
+    {
+        print_info("🎉 Resume functionality test PASSED!");
+    } else {
+        print_error("❌ Resume functionality test FAILED!");
     }
 
     Ok(())

@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+// Type aliases for better code readability
+/// Map of date to daily token usage aggregation
+pub type DailyUsageMap = HashMap<NaiveDate, TokenUsage>;
+/// Map of session path to (usage, last_activity_time)
+pub type SessionUsageMap = HashMap<String, (TokenUsage, DateTime<Utc>)>;
+
+/// Core data structures for Claude Code usage analysis
+/// Main structure representing a single usage record from JSONL files
 #[derive(Debug, Deserialize)]
 pub struct UsageRecord {
     #[serde(default)]
@@ -13,6 +21,7 @@ pub struct UsageRecord {
     pub cost_usd: Option<f64>,
 }
 
+/// Message data containing usage information and model details
 #[derive(Debug, Deserialize)]
 pub struct MessageData {
     #[serde(default)]
@@ -21,6 +30,7 @@ pub struct MessageData {
     pub model: Option<String>,
 }
 
+/// Token usage breakdown from API response
 #[derive(Debug, Deserialize)]
 pub struct Usage {
     pub input_tokens: u64,
@@ -31,6 +41,7 @@ pub struct Usage {
     pub cache_read_input_tokens: u64,
 }
 
+/// Aggregated token usage with cost calculation
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct TokenUsage {
     pub input_tokens: u64,
@@ -212,9 +223,6 @@ pub struct DetailedSessionReport {
     pub totals: TokenUsageTotals,
 }
 
-pub type DailyUsageMap = HashMap<NaiveDate, TokenUsage>;
-pub type SessionUsageMap = HashMap<String, (TokenUsage, DateTime<Utc>)>;
-
 // Advanced TUI features - Message-level analysis
 #[derive(Debug, Clone, Serialize)]
 pub struct MessageDetail {
@@ -329,6 +337,7 @@ pub struct HeatmapData {
 }
 
 // Command palette actions
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum CommandAction {
     SwitchTab(usize),

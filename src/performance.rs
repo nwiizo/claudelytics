@@ -10,12 +10,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// メモリ効率的なデータストリーミング処理
+#[allow(dead_code)]
 pub struct StreamProcessor {
     validator: RecordValidator,
     converter: RecordConverter,
     chunk_size: usize,
 }
 
+#[allow(dead_code)]
 impl StreamProcessor {
     pub fn new(validator: RecordValidator, converter: RecordConverter, chunk_size: usize) -> Self {
         Self {
@@ -72,12 +74,14 @@ impl StreamProcessor {
 }
 
 /// LRU キャッシュシステム
+#[allow(dead_code)]
 pub struct LruCache<K, V> {
     data: HashMap<K, (V, Instant)>,
     capacity: usize,
     ttl: Duration,
 }
 
+#[allow(dead_code)]
 impl<K, V> LruCache<K, V>
 where
     K: Clone + Eq + std::hash::Hash,
@@ -136,11 +140,13 @@ where
 }
 
 /// オブジェクトプールによるメモリ効率化
+#[allow(dead_code)]
 pub struct ObjectPool<T> {
     objects: Arc<Mutex<Vec<T>>>,
     factory: Box<dyn Fn() -> T + Send + Sync>,
 }
 
+#[allow(dead_code)]
 impl<T> ObjectPool<T>
 where
     T: Default + Send + 'static,
@@ -179,6 +185,7 @@ pub struct PooledObject<T> {
     pool: Arc<Mutex<Vec<T>>>,
 }
 
+#[allow(dead_code)]
 impl<T> PooledObject<T> {
     pub fn as_mut(&mut self) -> &mut T {
         self.object.as_mut().unwrap()
@@ -209,11 +216,13 @@ impl<T> Drop for PooledObject<T> {
 }
 
 /// 並列処理の最適化された実装
+#[allow(dead_code)]
 pub struct OptimizedParallelProcessor {
     thread_pool: rayon::ThreadPool,
     cache: Arc<Mutex<LruCache<String, UsageMetrics>>>,
 }
 
+#[allow(dead_code)]
 impl OptimizedParallelProcessor {
     pub fn new(num_threads: usize, cache_capacity: usize) -> Result<Self> {
         let thread_pool = rayon::ThreadPoolBuilder::new()
@@ -284,6 +293,7 @@ pub struct MemoryMonitor {
     limit: Option<usize>,
 }
 
+#[allow(dead_code)]
 impl MemoryMonitor {
     pub fn new(limit_mb: Option<usize>) -> Self {
         Self {
@@ -325,6 +335,7 @@ impl MemoryMonitor {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct MemoryStats {
     pub current_usage_mb: usize,
     pub peak_usage_mb: usize,
@@ -332,12 +343,16 @@ pub struct MemoryStats {
 }
 
 /// 遅延評価によるデータ処理最適化
+type ProcessorFn<T> = Box<dyn Fn(&[T]) -> Vec<T> + Send + Sync>;
+
+#[allow(dead_code)]
 pub struct LazyDataProcessor<T> {
     data: Vec<T>,
     processed: bool,
-    processor: Box<dyn Fn(&[T]) -> Vec<T> + Send + Sync>,
+    processor: ProcessorFn<T>,
 }
 
+#[allow(dead_code)]
 impl<T> LazyDataProcessor<T>
 where
     T: Clone + Send + Sync + 'static,
@@ -371,11 +386,13 @@ where
 }
 
 /// パフォーマンス測定ユーティリティ
+#[allow(dead_code)]
 pub struct PerformanceProfiler {
     start_time: Instant,
     checkpoints: Vec<(String, Instant)>,
 }
 
+#[allow(dead_code)]
 impl PerformanceProfiler {
     pub fn new() -> Self {
         Self {
@@ -423,12 +440,14 @@ pub struct PerformanceReport {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct PerformanceSection {
     pub name: String,
     pub duration: Duration,
     pub percentage: f64,
 }
 
+#[allow(dead_code)]
 impl PerformanceReport {
     pub fn print_summary(&self) {
         println!("Performance Report:");

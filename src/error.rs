@@ -2,6 +2,7 @@ use std::fmt;
 use std::io;
 
 /// アプリケーション全体で使用するエラー型
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum ClaudelyticsError {
     /// ファイルI/Oエラー
@@ -125,6 +126,7 @@ impl From<csv::Error> for ClaudelyticsError {
 pub type Result<T> = std::result::Result<T, ClaudelyticsError>;
 
 /// エラーを作成するためのヘルパー関数群
+#[allow(dead_code)]
 impl ClaudelyticsError {
     pub fn json_parse_error(
         file_path: &str,
@@ -184,6 +186,7 @@ impl ClaudelyticsError {
 }
 
 /// デバッグ用のエラーレポート
+#[allow(dead_code)]
 impl ClaudelyticsError {
     pub fn detailed_message(&self) -> String {
         match self {
