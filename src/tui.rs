@@ -231,8 +231,10 @@ impl TuiApp {
                 if !self.resume_sessions.is_empty() {
                     self.resume_table_state.select(Some(0));
                 }
-                self.status_message =
-                    Some(format!("📋 Loaded {} sessions with summaries linked to usage data", self.resume_sessions.len()));
+                self.status_message = Some(format!(
+                    "📋 Loaded {} sessions with summaries linked to usage data",
+                    self.resume_sessions.len()
+                ));
             }
             Err(e) => {
                 self.status_message = Some(format!("❌ Failed to load sessions: {}", e));
@@ -282,8 +284,6 @@ impl TuiApp {
         ]
     }
 
-
-
     fn open_selected_session(&mut self) {
         if let Some(selected) = self.resume_table_state.selected() {
             if let Some(session) = self.resume_sessions.get(selected) {
@@ -308,7 +308,8 @@ impl TuiApp {
         // Show message instead of actually opening to prevent hanging
         anyhow::bail!(
             "Opening Claude session {} is disabled to prevent hanging. Use 'claude --resume {}' in terminal instead.",
-            session_number, session_number
+            session_number,
+            session_number
         )
     }
 
@@ -404,29 +405,29 @@ impl TuiApp {
             if poll(std::time::Duration::from_millis(50))? {
                 if let Ok(evt) = event::read() {
                     match evt {
-                    Event::Key(key) => {
-                        if key.kind == KeyEventKind::Press {
-                            match self.current_mode {
-                                AppMode::CommandPalette => {
-                                    self.handle_command_palette_input(key.code, key.modifiers)?;
-                                }
-                                AppMode::Search => {
-                                    self.handle_search_input(key.code)?;
-                                }
-                                AppMode::Normal => {
-                                    if self.search_mode {
+                        Event::Key(key) => {
+                            if key.kind == KeyEventKind::Press {
+                                match self.current_mode {
+                                    AppMode::CommandPalette => {
+                                        self.handle_command_palette_input(key.code, key.modifiers)?;
+                                    }
+                                    AppMode::Search => {
                                         self.handle_search_input(key.code)?;
-                                    } else {
-                                        self.handle_normal_input(key.code, key.modifiers)?;
+                                    }
+                                    AppMode::Normal => {
+                                        if self.search_mode {
+                                            self.handle_search_input(key.code)?;
+                                        } else {
+                                            self.handle_normal_input(key.code, key.modifiers)?;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                    Event::Mouse(mouse) => {
-                        self.handle_mouse_event(mouse);
-                    }
-                    _ => {}
+                        Event::Mouse(mouse) => {
+                            self.handle_mouse_event(mouse);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -613,7 +614,7 @@ impl TuiApp {
         self.session_report = self.original_session_report.clone();
 
         // Simplified filtering to prevent hangs
-        
+
         // Apply search filter only (skip time filter for now)
         if !self.search_query.is_empty() {
             self.session_report.sessions.retain(|session| {
@@ -657,7 +658,7 @@ impl TuiApp {
             self.session_scroll_state = ScrollbarState::new(session_count);
             self.session_table_state.select(Some(0));
         }
-        
+
         if !self.daily_report.daily.is_empty() {
             self.daily_table_state.select(Some(0));
         }
@@ -1363,7 +1364,8 @@ impl TuiApp {
                 let truncated_path = self.truncate_text(&session_path, 30);
 
                 // Try to find conversation summary for this session
-                let summary = self.try_find_conversation_summary(&session.session_id)
+                let summary = self
+                    .try_find_conversation_summary(&session.session_id)
                     .map(|s| self.truncate_text(&s, 40))
                     .unwrap_or_else(|| "No summary available".to_string());
 
@@ -1393,8 +1395,7 @@ impl TuiApp {
                     Cell::from(bookmark_indicator).style(Style::default().fg(Color::Yellow)),
                     Cell::from(format!("{} t/$", efficiency))
                         .style(Style::default().fg(Color::Cyan)),
-                    Cell::from(summary)
-                        .style(Style::default().fg(Color::LightBlue)),
+                    Cell::from(summary).style(Style::default().fg(Color::LightBlue)),
                 ])
                 .height(1)
             });
