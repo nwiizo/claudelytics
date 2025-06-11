@@ -11,6 +11,7 @@ mod domain;
 mod error;
 mod export;
 mod interactive;
+mod mcp;
 mod models;
 mod parser;
 mod performance;
@@ -25,21 +26,47 @@ mod watcher;
 // Core dependencies
 use anyhow::Result;
 use chrono::Local;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use display::{
     display_daily_report_enhanced, display_daily_report_json, display_daily_report_table,
+    display_monthly_report_enhanced, display_monthly_report_json, display_monthly_report_table,
     display_session_report_enhanced, display_session_report_json, display_session_report_table,
     print_error, print_info, print_warning,
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
 use interactive::InteractiveSelector;
 use parser::UsageParser;
-use reports::{generate_daily_report, generate_session_report};
+use reports::{
+    SortField as ReportSortField, SortOrder as ReportSortOrder, generate_daily_report_sorted,
+    generate_monthly_report_sorted, generate_session_report_sorted,
+};
 use state::{TuiMode, TuiSessionState};
 use std::path::PathBuf;
 use tui::TuiApp;
 use watcher::UsageWatcher;
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum SortOrder {
+    /// Sort in ascending order
+    Asc,
+    /// Sort in descending order
+    Desc,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum SortField {
+    /// Sort by date/time
+    Date,
+    /// Sort by cost
+    Cost,
+    /// Sort by total tokens
+    Tokens,
+    /// Sort by efficiency (tokens per dollar)
+    Efficiency,
+    /// Sort by project name
+    Project,
+}
 
 #[derive(Parser)]
 #[command(name = "claudelytics")]
@@ -144,6 +171,18 @@ enum Commands {
             long_help = "Override enhanced format with classic ASCII tables\nInherits global flags: --json, --today, --since, --until"
         )]
         classic: bool,
+        #[arg(
+            long,
+            help = "Sort field",
+            long_help = "Field to sort by: date, cost, tokens\nDefault: date (most recent first)"
+        )]
+        sort_by: Option<SortField>,
+        #[arg(
+            long,
+            help = "Sort order",
+            long_help = "Sort order: asc (ascending), desc (descending)\nDefault: desc for date/cost/tokens"
+        )]
+        sort_order: Option<SortOrder>,
     },
     #[command(about = "Show session-based usage report")]
     #[command(
@@ -156,6 +195,18 @@ enum Commands {
             long_help = "Override enhanced format with classic ASCII tables\nInherits global flags: --json, --today, --since, --until"
         )]
         classic: bool,
+        #[arg(
+            long,
+            help = "Sort field",
+            long_help = "Field to sort by: date, cost, tokens, efficiency, project\nDefault: cost (highest first)"
+        )]
+        sort_by: Option<SortField>,
+        #[arg(
+            long,
+            help = "Sort order",
+            long_help = "Sort order: asc (ascending), desc (descending)\nDefault: desc for cost/tokens/efficiency, asc for project"
+        )]
+        sort_order: Option<SortOrder>,
     },
     #[command(about = "Interactive session selector (peco-style)")]
     #[command(
@@ -206,6 +257,30 @@ enum Commands {
         )]
         output: Option<PathBuf>,
     },
+    #[command(about = "Show usage aggregated by months")]
+    #[command(
+        long_about = "Show usage aggregated by calendar months\n\nDisplays monthly summaries with total usage, active days,\nand average daily costs for better long-term analysis.\n\nEXAMPLES:\n  claudelytics monthly                  # Enhanced monthly report\n  claudelytics monthly --classic        # Classic table format\n  claudelytics --json monthly           # JSON output (global flag)\n  claudelytics --since 202401 monthly   # From January 2024 onwards"
+    )]
+    Monthly {
+        #[arg(
+            long,
+            help = "Use classic table format",
+            long_help = "Override enhanced format with classic ASCII tables\nInherits global flags: --json, --since, --until"
+        )]
+        classic: bool,
+        #[arg(
+            long,
+            help = "Sort field",
+            long_help = "Field to sort by: date, cost, tokens\nDefault: date (most recent first)"
+        )]
+        sort_by: Option<SortField>,
+        #[arg(
+            long,
+            help = "Sort order",
+            long_help = "Sort order: asc (ascending), desc (descending)\nDefault: desc for date/cost/tokens"
+        )]
+        sort_order: Option<SortOrder>,
+    },
     #[command(about = "Manage configuration")]
     #[command(
         long_about = "Manage Claudelytics configuration settings\n\nConfiguration is stored in YAML format and persists between runs.\nUse --show to view current settings or modify specific options.\n\nCONFIG LOCATION:\n  ~/.config/claudelytics/config.yaml (or platform equivalent)\n\nAVAILABLE SETTINGS:\n  - Claude directory path\n  - Default output format (enhanced/classic/json)\n  - Default command\n  - Watch interval for real-time monitoring\n  - Export directory\n  - Date format preferences\n\nEXAMPLES:\n  claudelytics config --show            # View current configuration\n  claudelytics config --set-path ~/claude # Set custom Claude directory\n  claudelytics config --reset           # Reset to defaults"
@@ -247,6 +322,30 @@ enum Commands {
             long_help = "Display cost for a specific date\nFormat: YYYYMMDD (e.g., 20240315 for March 15, 2024)\nShows: date, cost, tokens for that day only"
         )]
         date: Option<String>,
+    },
+    #[command(about = "Start Model Context Protocol (MCP) server")]
+    #[command(
+        long_about = "Start an MCP server to expose claudelytics data via the Model Context Protocol\n\nThe MCP server allows other applications to query claudelytics data through\na standardized protocol. Supports both stdio and HTTP transport methods.\n\nEXAMPLES:\n  claudelytics mcp-server                # Start stdio server\n  claudelytics mcp-server --http 8080    # Start HTTP server on port 8080\n  claudelytics mcp-server --list-tools   # Show available MCP tools\n  claudelytics mcp-server --list-resources # Show available MCP resources"
+    )]
+    McpServer {
+        #[arg(
+            long,
+            help = "Start HTTP server on specified port",
+            long_help = "Start MCP server using HTTP with Server-Sent Events\nAllows remote connections from MCP clients"
+        )]
+        http: Option<u16>,
+        #[arg(
+            long,
+            help = "List available MCP tools",
+            long_help = "Show all MCP tools that can be called by clients\nTools are functions that perform actions with optional parameters"
+        )]
+        list_tools: bool,
+        #[arg(
+            long,
+            help = "List available MCP resources",
+            long_help = "Show all MCP resources that can be read by clients\nResources are data endpoints that provide usage information"
+        )]
+        list_resources: bool,
     },
     #[command(about = "Debug resume state")]
     #[command(long_about = "Debug command to show TUI session state information")]
@@ -325,9 +424,13 @@ fn run() -> Result<()> {
         return Ok(());
     }
 
-    // Generate reports
-    let daily_report = generate_daily_report(daily_map);
-    let session_report = generate_session_report(session_map);
+    // Clone maps for potential re-generation with different sorting
+    let daily_map_clone = daily_map.clone();
+    let session_map_clone = session_map.clone();
+
+    // Generate default reports
+    let mut daily_report = generate_daily_report_sorted(daily_map, None, None);
+    let mut session_report = generate_session_report_sorted(session_map, None, None);
 
     // Handle export command
     if let Some(Commands::Export {
@@ -363,6 +466,16 @@ fn run() -> Result<()> {
         return handle_test_resume_command(daily_report, session_report);
     }
 
+    // Handle MCP server command
+    if let Some(Commands::McpServer {
+        http,
+        list_tools,
+        list_resources,
+    }) = &cli.command
+    {
+        return handle_mcp_server_command(&claude_dir, *http, *list_tools, *list_resources);
+    }
+
     // Handle TUI flag or command
     if cli.tui {
         let mut tui_app = TuiApp::new(daily_report, session_report);
@@ -389,9 +502,26 @@ fn run() -> Result<()> {
     // }
 
     // Generate and display report based on command
-    let command = cli.command.unwrap_or(Commands::Daily { classic: false });
+    let command = cli.command.unwrap_or(Commands::Daily {
+        classic: false,
+        sort_by: None,
+        sort_order: None,
+    });
     match command {
-        Commands::Daily { classic } => {
+        Commands::Daily {
+            classic,
+            sort_by,
+            sort_order,
+        } => {
+            // Re-generate with sorting if specified
+            if sort_by.is_some() || sort_order.is_some() {
+                daily_report = generate_daily_report_sorted(
+                    daily_map_clone.clone(),
+                    convert_sort_field(sort_by),
+                    convert_sort_order(sort_order),
+                );
+            }
+
             if daily_report.daily.is_empty() {
                 print_warning("No daily usage data found for the specified date range");
             } else if cli.json {
@@ -402,7 +532,20 @@ fn run() -> Result<()> {
                 display_daily_report_enhanced(&daily_report);
             }
         }
-        Commands::Session { classic } => {
+        Commands::Session {
+            classic,
+            sort_by,
+            sort_order,
+        } => {
+            // Re-generate with sorting if specified
+            if sort_by.is_some() || sort_order.is_some() {
+                session_report = generate_session_report_sorted(
+                    session_map_clone.clone(),
+                    convert_sort_field(sort_by),
+                    convert_sort_order(sort_order),
+                );
+            }
+
             if session_report.sessions.is_empty() {
                 print_warning("No session usage data found for the specified date range");
             } else if cli.json {
@@ -411,6 +554,28 @@ fn run() -> Result<()> {
                 display_session_report_table(&session_report);
             } else {
                 display_session_report_enhanced(&session_report);
+            }
+        }
+        Commands::Monthly {
+            classic,
+            sort_by,
+            sort_order,
+        } => {
+            // Generate monthly report from daily data with sorting
+            let monthly_report = generate_monthly_report_sorted(
+                daily_map_clone.clone(),
+                convert_sort_field(sort_by),
+                convert_sort_order(sort_order),
+            );
+
+            if monthly_report.monthly.is_empty() {
+                print_warning("No monthly usage data found for the specified date range");
+            } else if cli.json {
+                display_monthly_report_json(&monthly_report);
+            } else if cli.classic || classic {
+                display_monthly_report_table(&monthly_report);
+            } else {
+                display_monthly_report_enhanced(&monthly_report);
             }
         }
         Commands::Interactive => {
@@ -452,6 +617,93 @@ fn run() -> Result<()> {
         //     analytics_tui_app.run()?;
         // } // Temporarily disabled - work in progress
         _ => {} // Other commands handled above
+    }
+
+    Ok(())
+}
+
+/// Convert CLI SortField to report SortField
+fn convert_sort_field(field: Option<SortField>) -> Option<ReportSortField> {
+    field.map(|f| match f {
+        SortField::Date => ReportSortField::Date,
+        SortField::Cost => ReportSortField::Cost,
+        SortField::Tokens => ReportSortField::Tokens,
+        SortField::Efficiency => ReportSortField::Efficiency,
+        SortField::Project => ReportSortField::Project,
+    })
+}
+
+/// Convert CLI SortOrder to report SortOrder
+fn convert_sort_order(order: Option<SortOrder>) -> Option<ReportSortOrder> {
+    order.map(|o| match o {
+        SortOrder::Asc => ReportSortOrder::Asc,
+        SortOrder::Desc => ReportSortOrder::Desc,
+    })
+}
+
+/// Handle MCP server command
+fn handle_mcp_server_command(
+    claude_dir: &PathBuf,
+    http_port: Option<u16>,
+    list_tools: bool,
+    list_resources: bool,
+) -> Result<()> {
+    use mcp::{McpServer, get_server_info};
+
+    let server = McpServer::new(claude_dir.clone());
+
+    // Handle list commands
+    if list_tools {
+        println!("📋 Available MCP Tools:");
+        for tool in server.list_tools() {
+            println!("  🔧 {}", tool.name);
+            println!("     {}", tool.description);
+            println!(
+                "     Schema: {}",
+                serde_json::to_string_pretty(&tool.input_schema)?
+            );
+            println!();
+        }
+        return Ok(());
+    }
+
+    if list_resources {
+        println!("📋 Available MCP Resources:");
+        for resource in server.list_resources() {
+            println!("  📊 {} ({})", resource.name, resource.uri);
+            println!("     {}", resource.description);
+            println!("     Type: {}", resource.mime_type);
+            println!();
+        }
+        return Ok(());
+    }
+
+    // Start server
+    if let Some(port) = http_port {
+        print_info(&format!("Starting MCP HTTP server on port {}", port));
+        println!(
+            "Server info: {}",
+            serde_json::to_string_pretty(&get_server_info())?
+        );
+        print_warning("HTTP MCP server not yet fully implemented - use stdio mode");
+    } else {
+        print_info("Starting MCP stdio server");
+        println!(
+            "Server info: {}",
+            serde_json::to_string_pretty(&get_server_info())?
+        );
+        print_warning("Stdio MCP server not yet fully implemented - this is a preview");
+
+        // Show what would be available
+        println!("\n📋 Available Resources:");
+        for resource in server.list_resources() {
+            println!("  - {}", resource.uri);
+        }
+
+        println!("\n🔧 Available Tools:");
+        for tool in server.list_tools() {
+            println!("  - {}", tool.name);
+        }
     }
 
     Ok(())

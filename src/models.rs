@@ -148,6 +148,34 @@ pub struct DailyReport {
 }
 
 #[derive(Debug, Serialize, Clone)]
+pub struct MonthlyUsage {
+    pub month: String,
+    pub year: u32,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: u64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: u64,
+    #[serde(rename = "cacheCreationTokens")]
+    pub cache_creation_tokens: u64,
+    #[serde(rename = "cacheReadTokens")]
+    pub cache_read_tokens: u64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: u64,
+    #[serde(rename = "totalCost")]
+    pub total_cost: f64,
+    #[serde(rename = "daysActive")]
+    pub days_active: u32,
+    #[serde(rename = "avgDailyCost")]
+    pub avg_daily_cost: f64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct MonthlyReport {
+    pub monthly: Vec<MonthlyUsage>,
+    pub totals: TokenUsageTotals,
+}
+
+#[derive(Debug, Serialize, Clone)]
 pub struct SessionReport {
     pub sessions: Vec<SessionUsage>,
     pub totals: TokenUsageTotals,
