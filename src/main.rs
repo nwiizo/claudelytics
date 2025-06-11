@@ -73,7 +73,7 @@ pub enum SortField {
 #[command(
     about = "Claude Code usage analytics tool - Analyze token usage, costs, and session patterns"
 )]
-#[command(version = "0.2.0")]
+#[command(version = "0.3.0")]
 #[command(
     long_about = "Claudelytics analyzes Claude Code usage patterns and costs by parsing JSONL files from ~/.claude/projects/.
 
