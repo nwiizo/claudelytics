@@ -42,7 +42,7 @@ use reports::{
     generate_monthly_report_sorted, generate_session_report_sorted,
 };
 use state::{TuiMode, TuiSessionState};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tui::TuiApp;
 use watcher::UsageWatcher;
 
@@ -473,7 +473,12 @@ fn run() -> Result<()> {
         list_resources,
     }) = &cli.command
     {
-        return handle_mcp_server_command(&claude_dir, *http, *list_tools, *list_resources);
+        return handle_mcp_server_command(
+            claude_dir.as_path(),
+            *http,
+            *list_tools,
+            *list_resources,
+        );
     }
 
     // Handle TUI flag or command
@@ -643,14 +648,14 @@ fn convert_sort_order(order: Option<SortOrder>) -> Option<ReportSortOrder> {
 
 /// Handle MCP server command
 fn handle_mcp_server_command(
-    claude_dir: &PathBuf,
+    claude_dir: &Path,
     http_port: Option<u16>,
     list_tools: bool,
     list_resources: bool,
 ) -> Result<()> {
     use mcp::{McpServer, get_server_info};
 
-    let server = McpServer::new(claude_dir.clone());
+    let server = McpServer::new(claude_dir.to_path_buf());
 
     // Handle list commands
     if list_tools {

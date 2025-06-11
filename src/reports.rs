@@ -20,10 +20,6 @@ pub enum SortOrder {
     Desc,
 }
 
-pub fn generate_daily_report(daily_map: DailyUsageMap) -> DailyReport {
-    generate_daily_report_sorted(daily_map, Some(SortField::Date), Some(SortOrder::Desc))
-}
-
 pub fn generate_daily_report_sorted(
     daily_map: DailyUsageMap,
     sort_field: Option<SortField>,
@@ -49,10 +45,6 @@ pub fn generate_daily_report_sorted(
         daily: daily_entries,
         totals: TokenUsageTotals::from(&totals),
     }
-}
-
-pub fn generate_session_report(session_map: SessionUsageMap) -> SessionReport {
-    generate_session_report_sorted(session_map, Some(SortField::Cost), Some(SortOrder::Desc))
 }
 
 pub fn generate_session_report_sorted(
@@ -97,10 +89,6 @@ pub fn generate_session_report_sorted(
         sessions: session_entries,
         totals: TokenUsageTotals::from(&totals),
     }
-}
-
-pub fn generate_monthly_report(daily_map: DailyUsageMap) -> MonthlyReport {
-    generate_monthly_report_sorted(daily_map, Some(SortField::Date), Some(SortOrder::Desc))
 }
 
 pub fn generate_monthly_report_sorted(
@@ -197,7 +185,7 @@ fn month_to_num(month: &str) -> u32 {
 }
 
 fn sort_daily_entries(
-    entries: &mut Vec<DailyUsage>,
+    entries: &mut [DailyUsage],
     sort_field: Option<SortField>,
     sort_order: Option<SortOrder>,
 ) {
@@ -223,7 +211,7 @@ fn sort_daily_entries(
 }
 
 fn sort_session_entries(
-    entries: &mut Vec<SessionUsage>,
+    entries: &mut [SessionUsage],
     sort_field: Option<SortField>,
     sort_order: Option<SortOrder>,
 ) {
@@ -264,7 +252,7 @@ fn sort_session_entries(
 }
 
 fn sort_monthly_entries(
-    entries: &mut Vec<MonthlyUsage>,
+    entries: &mut [MonthlyUsage],
     sort_field: Option<SortField>,
     sort_order: Option<SortOrder>,
 ) {
@@ -347,7 +335,7 @@ mod tests {
         };
         daily_map.insert(date, usage);
 
-        let report = generate_daily_report(daily_map);
+        let report = generate_daily_report_sorted(daily_map, None, None);
         assert_eq!(report.daily.len(), 1);
         assert_eq!(report.daily[0].date, "2024-01-01");
         assert_eq!(report.totals.input_tokens, 1000);

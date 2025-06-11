@@ -1,6 +1,6 @@
 use crate::display::{display_daily_report_table, print_info};
 use crate::parser::UsageParser;
-use crate::reports::generate_daily_report;
+use crate::reports::generate_daily_report_sorted;
 use anyhow::Result;
 use chrono::Local;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
@@ -86,7 +86,7 @@ impl UsageWatcher {
         let (daily_map, _) = self.parser.parse_all()?;
 
         if !daily_map.is_empty() {
-            let report = generate_daily_report(daily_map);
+            let report = generate_daily_report_sorted(daily_map, None, None);
             display_daily_report_table(&report);
         } else {
             print_info("No usage data found");

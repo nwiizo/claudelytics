@@ -102,9 +102,11 @@ mod tests {
 
     #[test]
     fn test_serialization() {
-        let mut state = TuiSessionState::default();
-        state.mode = TuiMode::Advanced;
-        state.last_tab = Some(2);
+        let mut state = TuiSessionState {
+            mode: TuiMode::Advanced,
+            last_tab: Some(2),
+            ..Default::default()
+        };
         state.bookmarked_sessions.push("test/session".to_string());
 
         let json = serde_json::to_string(&state).unwrap();

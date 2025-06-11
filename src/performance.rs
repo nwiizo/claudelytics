@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_object_pool() {
-        let pool = ObjectPool::new(2, || Vec::<i32>::new());
+        let pool = ObjectPool::new(2, Vec::<i32>::new);
 
         let mut obj1 = pool.get();
         obj1.push(1);
