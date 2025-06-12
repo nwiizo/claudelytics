@@ -142,7 +142,8 @@ impl UsageParser {
                             // Always recalculate cost to match ccusage's behavior
                             // This ensures exact alignment with ccusage's calculation methodology
                             if let Some(model_name) = record.get_model_name() {
-                                let calculated_cost = self.calculate_cost_for_record(&record, model_name);
+                                let calculated_cost =
+                                    self.calculate_cost_for_record(&record, model_name);
                                 if calculated_cost > 0.0 {
                                     usage.total_cost = calculated_cost;
                                 }

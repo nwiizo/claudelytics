@@ -45,8 +45,16 @@ impl PricingFetcher {
             format!("claude-{}", model_name.trim_start_matches("claude-")),
             model_name.replace("claude-", ""),
             // Handle specific model mappings
-            if model_name.contains("sonnet-4") { "claude-sonnet-4-20250514".to_string() } else { String::new() },
-            if model_name.contains("opus-4") { "claude-opus-4-20250514".to_string() } else { String::new() },
+            if model_name.contains("sonnet-4") {
+                "claude-sonnet-4-20250514".to_string()
+            } else {
+                String::new()
+            },
+            if model_name.contains("opus-4") {
+                "claude-opus-4-20250514".to_string()
+            } else {
+                String::new()
+            },
         ];
 
         for variation in &claude_variations {

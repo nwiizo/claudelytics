@@ -313,16 +313,17 @@ fn display_enhanced_recent_activity(daily: &[crate::models::DailyUsage]) {
             0.0
         };
 
+        let efficiency_str = format!("{:>8.0} tok/$", efficiency);
         println!(
-            "{} {} {} {} {} {} {} {}",
+            "{} {:<18} {} {} {} {} {} {}",
             indicator,
-            format!("{:<18}", date_text),
+            date_text,
             "│".bright_black(),
             format!("{:>15} tokens", tokens_str).bright_cyan(),
             "│".bright_black(),
-            format!("{:>12}", cost_str).bright_green(),
+            cost_str.bright_green(),
             "│".bright_black(),
-            format!("{:>8.0} tok/$", efficiency).bright_yellow()
+            efficiency_str.bright_yellow()
         );
     }
 
