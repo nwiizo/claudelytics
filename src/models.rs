@@ -52,16 +52,50 @@ pub struct TokenUsage {
 }
 
 impl TokenUsage {
+    /// Calculate total tokens following ccusage methodology
+    /// Includes input, output, cache creation, and cache read tokens
     pub fn total_tokens(&self) -> u64 {
         self.input_tokens + self.output_tokens + self.cache_creation_tokens + self.cache_read_tokens
     }
 
+    /// Add another TokenUsage to this one
     pub fn add(&mut self, other: &TokenUsage) {
         self.input_tokens += other.input_tokens;
         self.output_tokens += other.output_tokens;
         self.cache_creation_tokens += other.cache_creation_tokens;
         self.cache_read_tokens += other.cache_read_tokens;
         self.total_cost += other.total_cost;
+    }
+
+    /// Calculate efficiency metrics
+    #[allow(dead_code)]
+    pub fn tokens_per_dollar(&self) -> f64 {
+        if self.total_cost > 0.0 {
+            self.total_tokens() as f64 / self.total_cost
+        } else {
+            0.0
+        }
+    }
+
+    /// Calculate output to input ratio for efficiency analysis
+    #[allow(dead_code)]
+    pub fn output_input_ratio(&self) -> f64 {
+        if self.input_tokens > 0 {
+            self.output_tokens as f64 / self.input_tokens as f64
+        } else {
+            0.0
+        }
+    }
+
+    /// Calculate cache efficiency (cache hits vs total input)
+    #[allow(dead_code)]
+    pub fn cache_efficiency(&self) -> f64 {
+        let total_input = self.input_tokens + self.cache_creation_tokens;
+        if total_input > 0 {
+            self.cache_read_tokens as f64 / total_input as f64
+        } else {
+            0.0
+        }
     }
 }
 

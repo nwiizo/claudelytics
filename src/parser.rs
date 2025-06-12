@@ -139,12 +139,21 @@ impl UsageParser {
                         {
                             let mut usage = TokenUsage::from(&record);
 
-                            // Calculate cost if not provided
-                            if usage.total_cost == 0.0 {
-                                if let Some(model_name) = record.get_model_name() {
-                                    usage.total_cost =
-                                        self.calculate_cost_for_record(&record, model_name);
+                            // Always recalculate cost to match ccusage's behavior
+                            // This ensures exact alignment with ccusage's calculation methodology
+                            if let Some(model_name) = record.get_model_name() {
+                                let calculated_cost = self.calculate_cost_for_record(&record, model_name);
+                                if calculated_cost > 0.0 {
+                                    usage.total_cost = calculated_cost;
                                 }
+                                // If calculation fails, fall back to costUSD if available
+                                else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
+                                    usage.total_cost = record.cost_usd.unwrap_or(0.0);
+                                }
+                            }
+                            // If no model name, use costUSD if available
+                            else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
+                                usage.total_cost = record.cost_usd.unwrap_or(0.0);
                             }
 
                             let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();

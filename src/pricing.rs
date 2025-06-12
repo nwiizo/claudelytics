@@ -38,15 +38,22 @@ impl PricingFetcher {
 
         // Try variations for Claude models
         let claude_variations = [
+            // Exact model name variations
+            model_name.to_string(),
             format!("claude-3-5-{}", model_name.trim_start_matches("claude-")),
             format!("claude-3-{}", model_name.trim_start_matches("claude-")),
             format!("claude-{}", model_name.trim_start_matches("claude-")),
             model_name.replace("claude-", ""),
+            // Handle specific model mappings
+            if model_name.contains("sonnet-4") { "claude-sonnet-4-20250514".to_string() } else { String::new() },
+            if model_name.contains("opus-4") { "claude-opus-4-20250514".to_string() } else { String::new() },
         ];
 
         for variation in &claude_variations {
-            if let Some(pricing) = pricing_data.get(variation) {
-                return Some(pricing.clone());
+            if !variation.is_empty() {
+                if let Some(pricing) = pricing_data.get(variation) {
+                    return Some(pricing.clone());
+                }
             }
         }
 
@@ -90,18 +97,30 @@ impl PricingFetcher {
     }
 }
 
-// Fallback pricing for common Claude models (as of 2024)
+// Fallback pricing for common Claude models (as of 2025)
+// Updated to match ccusage pricing methodology
 pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
     let mut pricing = HashMap::new();
 
-    // Claude 4 Opus (New model)
+    // Claude Sonnet 4 (Latest model) - Official pricing: $3.00/$15.00 per million tokens
+    pricing.insert(
+        "claude-sonnet-4-20250514".to_string(),
+        ModelPricing {
+            input_cost_per_token: Some(3.0 / 1_000_000.0),
+            output_cost_per_token: Some(15.0 / 1_000_000.0),
+            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0), // 25% markup for cache creation
+            cache_read_input_token_cost: Some(0.3 / 1_000_000.0), // 90% discount for cache reads
+        },
+    );
+
+    // Claude 4 Opus (New model) - Official pricing: $15.00/$75.00 per million tokens
     pricing.insert(
         "claude-opus-4-20250514".to_string(),
         ModelPricing {
-            input_cost_per_token: Some(0.015 / 1000.0),
-            output_cost_per_token: Some(0.075 / 1000.0),
-            cache_creation_input_token_cost: Some(0.01875 / 1000.0),
-            cache_read_input_token_cost: Some(0.0015 / 1000.0),
+            input_cost_per_token: Some(15.0 / 1_000_000.0),
+            output_cost_per_token: Some(75.0 / 1_000_000.0),
+            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0), // 25% markup for cache creation
+            cache_read_input_token_cost: Some(1.5 / 1_000_000.0), // 90% discount for cache reads
         },
     );
 

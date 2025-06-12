@@ -5,6 +5,54 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-06-12
+
+### 🔧 Cost Calculation Alignment with ccusage
+
+This patch release aligns claudelytics' cost calculation methodology with ccusage, ensuring consistent and accurate cost reporting across different Claude usage analysis tools.
+
+### ✨ Added
+
+#### Cost Calculation Improvements
+- **ccusage Compatibility**: Aligned cost calculation to match ccusage's methodology
+- **Enhanced Calculation Mode**: Always recalculate costs for better accuracy
+- **Fallback Logic**: Smart fallback to costUSD when calculation fails
+
+### 🔧 Improved
+
+#### Display Enhancements
+- **Professional Headers**: Beautiful section headers with emoji indicators
+- **Enhanced Summary Card**: Comprehensive cost and usage metrics at a glance
+- **Efficiency Metrics**: Added tokens per dollar, O/I ratio, and cache hit rate
+- **Visual Improvements**: Better spacing, color usage, and separator lines
+- **3-Digit Cost Support**: Fixed display formatting for costs over $100
+
+#### Code Quality
+- **Dead Code Removal**: Cleaned up unused functions and added proper attributes
+- **Build Warnings**: Resolved all compilation warnings
+- **Code Organization**: Better separation of display logic
+
+### 🔄 Changed
+
+#### Pricing Updates
+- **Model Pricing**: Updated to latest Claude 4 pricing structure
+- **Official Rates**: Claude Sonnet 4 ($3/$15) and Claude Opus 4 ($15/$75) per million tokens
+- **Cache Pricing**: Accurate cache creation (25% markup) and cache read (90% discount) rates
+
+### 🐛 Fixed
+
+- **Cost Display**: Fixed formatting issues for 3-digit costs
+- **Build Errors**: Resolved all cargo build warnings and errors
+- **Model Mapping**: Improved model name detection and pricing lookup
+
+### 📊 Technical Details
+
+- **Calculation Method**: Switched from "auto" mode to always recalculate for consistency
+- **Price Precision**: Using precise per-token rates (e.g., $3.0/1,000,000 tokens)
+- **Efficiency Calculation**: Added comprehensive efficiency metrics to TokenUsage struct
+
+---
+
 ## [0.3.0] - 2025-06-11
 
 ### 🚀 Major Feature Release
@@ -201,6 +249,7 @@ This release establishes the foundation for:
 - CSV export capabilities
 - Real-time monitoring with watch mode
 
+[0.3.1]: https://github.com/nwiizo/claudelytics/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nwiizo/claudelytics/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nwiizo/claudelytics/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nwiizo/claudelytics/releases/tag/v0.1.0
