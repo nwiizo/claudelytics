@@ -1,4 +1,5 @@
 use crate::models::{DailyUsageMap, SessionUsageMap, TokenUsage, UsageRecord};
+use crate::models_registry::ModelsRegistry;
 use crate::pricing::{PricingFetcher, get_fallback_pricing};
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, TimeZone};
@@ -13,11 +14,18 @@ pub struct UsageParser {
     claude_dir: PathBuf,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
+    model_filter: Option<String>,
     pricing_fetcher: PricingFetcher,
+    models_registry: ModelsRegistry,
 }
 
 impl UsageParser {
-    pub fn new(claude_dir: PathBuf, since: Option<String>, until: Option<String>) -> Result<Self> {
+    pub fn new(
+        claude_dir: PathBuf,
+        since: Option<String>,
+        until: Option<String>,
+        model_filter: Option<String>,
+    ) -> Result<Self> {
         let since = since.map(|s| parse_date(&s)).transpose()?;
         let until = until.map(|s| parse_date(&s)).transpose()?;
 
@@ -31,7 +39,9 @@ impl UsageParser {
             claude_dir,
             since,
             until,
+            model_filter,
             pricing_fetcher: PricingFetcher::new(),
+            models_registry: ModelsRegistry::new(),
         })
     }
 
@@ -164,13 +174,10 @@ impl UsageParser {
                                 .or_insert_with(TokenUsage::default)
                                 .add(&usage);
 
-                            session_map
+                            let session_entry = session_map
                                 .entry(session_info.clone())
-                                .or_insert((TokenUsage::default(), timestamp))
-                                .0
-                                .add(&usage);
-
-                            let session_entry = session_map.get_mut(&session_info).unwrap();
+                                .or_insert((TokenUsage::default(), timestamp));
+                            session_entry.0.add(&usage);
                             if timestamp > session_entry.1 {
                                 session_entry.1 = timestamp;
                             }
@@ -227,6 +234,18 @@ impl UsageParser {
 
         if let Some(until) = self.until {
             if date > until {
+                return false;
+            }
+        }
+
+        // Apply model filter using ModelsRegistry
+        if let Some(filter) = &self.model_filter {
+            if let Some(model_name) = record.get_model_name() {
+                if !self.models_registry.matches_filter(model_name, filter) {
+                    return false;
+                }
+            } else {
+                // No model name in record, exclude it when filter is active
                 return false;
             }
         }

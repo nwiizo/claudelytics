@@ -13,6 +13,7 @@ mod export;
 mod interactive;
 mod mcp;
 mod models;
+mod models_registry;
 mod parser;
 mod performance;
 mod pricing;
@@ -30,9 +31,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use display::{
     display_daily_report_enhanced, display_daily_report_json, display_daily_report_table,
-    display_monthly_report_enhanced, display_monthly_report_json, display_monthly_report_table,
-    display_session_report_enhanced, display_session_report_json, display_session_report_table,
-    print_error, print_info, print_warning,
+    display_model_breakdown_report, display_monthly_report_enhanced, display_monthly_report_json,
+    display_monthly_report_table, display_session_report_enhanced, display_session_report_json,
+    display_session_report_table, print_error, print_info, print_warning,
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
 use interactive::InteractiveSelector;
@@ -154,6 +155,28 @@ struct Cli {
         long_help = "Launch interactive terminal user interface (TUI)\nFeatures: Navigation, search, charts, multiple tabs\nKeyboard shortcuts: j/k navigation, q to quit, ? for help"
     )]
     tui: bool,
+
+    #[arg(
+        long,
+        value_name = "MODEL",
+        help = "Filter by model type (opus, sonnet, haiku)",
+        long_help = "Filter usage data by specific Claude model types\nOptions: opus, sonnet, haiku, or specific model names\nExamples:\n  --model-filter opus     # Show only Opus model usage\n  --model-filter sonnet   # Show only Sonnet model usage\n  --model-filter claude-opus-4-20250514  # Specific model version"
+    )]
+    model_filter: Option<String>,
+
+    #[arg(
+        long,
+        help = "List all known models and exit",
+        long_help = "Display all registered Claude models with their families and aliases\nUseful for seeing what models are available for filtering"
+    )]
+    list_models: bool,
+
+    #[arg(
+        long,
+        help = "Show usage breakdown by model family",
+        long_help = "Automatically categorize and display usage by model families (Opus, Sonnet, Haiku)\nShows cost and token usage for each model type in a single view\nCombines with other filters: --today, --since, --until"
+    )]
+    by_model: bool,
     // #[arg(long, help = "Launch analytics studio TUI", long_help = "Launch comprehensive analytics studio with AI insights\nFeatures: Pattern analysis, predictive modeling, ML insights, risk management\nKeyboard shortcuts: F10-F12 for analytics tabs, advanced data exploration")]
     // analytics_tui: bool, // Temporarily disabled - work in progress
 }
@@ -367,6 +390,37 @@ fn main() {
 fn run() -> Result<()> {
     let cli = Cli::parse();
 
+    // Handle --list-models flag
+    if cli.list_models {
+        use models_registry::ModelsRegistry;
+        let registry = ModelsRegistry::new();
+
+        println!("📋 Registered Claude Models\n");
+        println!(
+            "{:<40} {:<10} {:<20} {:<15}",
+            "Model Name", "Family", "Aliases", "Version"
+        );
+        println!("{}", "-".repeat(85));
+
+        for model in registry.list_models() {
+            let aliases = model.aliases.join(", ");
+            println!(
+                "{:<40} {:<10} {:<20} {:<15}",
+                model.name,
+                model.family,
+                aliases,
+                model.version.as_deref().unwrap_or("-")
+            );
+        }
+
+        println!("\n💡 Usage Examples:");
+        println!("  claudelytics --model-filter opus        # Filter by family");
+        println!("  claudelytics --model-filter sonnet-4    # Filter by alias");
+        println!("  claudelytics --model-filter claude-opus # Filter by partial name");
+
+        return Ok(());
+    }
+
     // Load configuration
     let mut config = Config::load().unwrap_or_default();
 
@@ -407,7 +461,12 @@ fn run() -> Result<()> {
     }
 
     // Create parser
-    let parser = UsageParser::new(claude_dir.clone(), since_date, until_date)?;
+    let parser = UsageParser::new(
+        claude_dir.clone(),
+        since_date,
+        until_date,
+        cli.model_filter.clone(),
+    )?;
 
     // Handle watch command
     if let Some(Commands::Watch) = &cli.command {
@@ -479,6 +538,12 @@ fn run() -> Result<()> {
             *list_tools,
             *list_resources,
         );
+    }
+
+    // Handle --by-model flag
+    if cli.by_model {
+        display_model_breakdown_report(&daily_map_clone, &session_map_clone);
+        return Ok(());
     }
 
     // Handle TUI flag or command

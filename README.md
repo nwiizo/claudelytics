@@ -16,6 +16,8 @@ A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token c
 - **📈 Session Reports**: Break down usage by individual Claude Code sessions  
 - **💰 Cost Tracking**: Quick cost summaries for today, specific dates, or totals
 - **🔍 Flexible Filtering**: Filter data by date ranges with `--since` and `--until`
+- **🎯 Model Filtering**: Filter by specific Claude models (opus, sonnet, haiku) or model versions
+- **📋 Model Registry**: Future-proof model management with aliases and automatic recognition
 
 ### Interactive & Real-time
 - **🎯 Interactive Mode**: peco-style fuzzy searchable session selector
@@ -177,6 +179,65 @@ claudelytics export --daily -o daily_report.csv
 claudelytics export --sessions -o sessions_report.csv
 claudelytics export --summary -o summary_report.csv
 ```
+
+### Model Filtering
+
+```bash
+# Filter by model family
+claudelytics --model-filter opus     # Show only Opus model usage
+claudelytics --model-filter sonnet   # Show only Sonnet model usage
+claudelytics --model-filter haiku    # Show only Haiku model usage
+
+# Filter by model alias
+claudelytics --model-filter opus4    # Opus 4 models
+claudelytics --model-filter sonnet-3.5  # Sonnet 3.5 models
+
+# Filter by specific model
+claudelytics --model-filter claude-opus-4-20250514
+
+# Combine with other options
+claudelytics --model-filter opus --today daily
+claudelytics --model-filter sonnet --json session
+
+# List all registered models
+claudelytics --list-models
+
+# Show usage breakdown by model family
+claudelytics --by-model
+
+# Alternative display formats for model breakdown
+CLAUDELYTICS_DISPLAY_FORMAT=minimal claudelytics --by-model  # Minimal format (no boxes)
+CLAUDELYTICS_DISPLAY_FORMAT=table claudelytics --by-model    # Full ASCII table (best alignment)
+CLAUDELYTICS_DISPLAY_FORMAT=json claudelytics --by-model     # JSON output (for scripts)
+```
+
+### Model Breakdown Display Formats
+
+The `--by-model` flag supports multiple display formats via the `CLAUDELYTICS_DISPLAY_FORMAT` environment variable:
+
+1. **Default Format** - Simple ASCII alignment using equals signs and dashes
+   ```bash
+   claudelytics --by-model
+   ```
+
+2. **Minimal Format** - Compact display without decorations
+   ```bash
+   CLAUDELYTICS_DISPLAY_FORMAT=minimal claudelytics --by-model
+   ```
+
+3. **Table Format** - Full ASCII table with perfect alignment
+   ```bash
+   CLAUDELYTICS_DISPLAY_FORMAT=table claudelytics --by-model
+   # Alternative: Use CLAUDELYTICS_TABLE_FORMAT for compatibility
+   CLAUDELYTICS_TABLE_FORMAT=true claudelytics --by-model
+   ```
+
+4. **JSON Format** - Machine-readable JSON output
+   ```bash
+   CLAUDELYTICS_DISPLAY_FORMAT=json claudelytics --by-model
+   ```
+
+These formats are designed to work across all terminals and avoid Unicode character alignment issues.
 
 ### Custom Configuration
 

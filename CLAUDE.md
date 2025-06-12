@@ -70,6 +70,18 @@ cargo run -- daily --classic        # Classic table format
 cargo run -- daily --json           # JSON output
 cargo run -- session                # Enhanced session view
 cargo run -- session --classic      # Classic session table
+
+# Model filtering options
+cargo run -- --model-filter opus     # Show only Opus model usage
+cargo run -- --model-filter sonnet   # Show only Sonnet model usage
+cargo run -- --model-filter opus4    # Filter by model alias
+cargo run -- --list-models           # List all registered models
+cargo run -- --model-filter opus --today daily  # Combine filters
+
+# Model breakdown display
+cargo run -- --by-model              # Show usage breakdown by model family
+CLAUDELYTICS_TABLE_FORMAT=true cargo run -- --by-model  # Use table format for better alignment
+CLAUDELYTICS_DISPLAY_FORMAT=table cargo run -- --by-model  # Alternative table format
 ```
 
 ## Pre-commit Requirements
@@ -301,7 +313,8 @@ end
 ### Module Structure
 - **main.rs**: CLI entry point using clap for argument parsing
 - **models.rs**: Core data structures for usage records, reports, token aggregation, and comprehensive analytics
-- **parser.rs**: JSONL file parsing with parallel processing using rayon
+- **models_registry.rs**: Model information registry for flexible model filtering and future model support
+- **parser.rs**: JSONL file parsing with parallel processing using rayon and model filtering support
 - **display.rs**: Output formatting (table and JSON) with colored terminal output
 - **reports.rs**: Report generation logic for daily and session analytics
 - **interactive.rs**: peco-style interactive session selector with fuzzy search
@@ -359,6 +372,10 @@ The tool expects Claude Code JSONL records with this structure:
 - **Enhanced Display**: Beautiful card-based layout with visual summaries (default)
 - **Classic Format**: Traditional table format available with `--classic` flag
 - **Enhanced UX**: Colored output, progress indicators, and better error messages
+- **Model Filtering**: Filter usage by specific Claude models (opus, sonnet, haiku) with `--model-filter`
+- **Model Registry**: Flexible model management system with aliases and future model support
+- **List Models**: `--list-models` flag to display all registered models with their families and aliases
+- **Model Breakdown Display**: `--by-model` flag with multiple format options (default, table, minimal, json)
 
 ### Enhanced TUI Features (claudelytics tui)
 - **Multi-tab Interface**: Overview, Daily, Sessions, Charts, Resume, and Help tabs
