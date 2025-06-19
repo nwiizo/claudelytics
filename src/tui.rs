@@ -43,7 +43,6 @@ enum AppMode {
     Normal,
     CommandPalette,
     Search,
-    ResumeInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -104,8 +103,11 @@ pub struct TuiApp {
     resume_table_state: TableState,
     resume_loading: bool,
     // Resume input buffer
+    #[allow(dead_code)]
     resume_input_mode: bool,
+    #[allow(dead_code)]
     resume_input_buffer: String,
+    #[allow(dead_code)]
     resume_input_cursor: usize,
     // Billing blocks
     billing_manager: BillingBlockManager,
@@ -505,9 +507,6 @@ impl TuiApp {
                                     AppMode::Search => {
                                         self.handle_search_input(key.code)?;
                                     }
-                                    AppMode::ResumeInput => {
-                                        self.handle_resume_input(key.code)?;
-                                    }
                                     AppMode::Normal => {
                                         if self.search_mode {
                                             self.handle_search_input(key.code)?;
@@ -583,15 +582,6 @@ impl TuiApp {
             }
             KeyCode::Char('r') => {
                 self.refresh_data()?;
-            }
-            KeyCode::Char('i') => {
-                if self.current_tab == Tab::Resume {
-                    self.resume_input_mode = true;
-                    self.current_mode = AppMode::ResumeInput;
-                    self.resume_input_buffer.clear();
-                    self.resume_input_cursor = 0;
-                    self.status_message = Some("💬 Enter message (Enter to send, Esc to cancel)".to_string());
-                }
             }
             KeyCode::Char('s') => {
                 if self.current_tab == Tab::BillingBlocks {
