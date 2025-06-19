@@ -166,16 +166,19 @@ where
         }
     }
 
-    pub fn get(&self) -> PooledObject<T> {
+    pub fn get(&self) -> Result<PooledObject<T>> {
         let obj = {
-            let mut objects = self.objects.lock().unwrap();
+            let mut objects = self
+                .objects
+                .lock()
+                .map_err(|_| ClaudelyticsError::other("Failed to acquire object pool lock"))?;
             objects.pop().unwrap_or_else(|| (self.factory)())
         };
 
-        PooledObject {
+        Ok(PooledObject {
             object: Some(obj),
             pool: Arc::clone(&self.objects),
-        }
+        })
     }
 }
 
@@ -187,8 +190,8 @@ pub struct PooledObject<T> {
 
 #[allow(dead_code)]
 impl<T> PooledObject<T> {
-    pub fn as_mut(&mut self) -> &mut T {
-        self.object.as_mut().unwrap()
+    pub fn as_mut(&mut self) -> Option<&mut T> {
+        self.object.as_mut()
     }
 }
 
@@ -196,21 +199,28 @@ impl<T> std::ops::Deref for PooledObject<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        self.object.as_ref().unwrap()
+        self.object
+            .as_ref()
+            .expect("PooledObject should always contain an object")
     }
 }
 
 impl<T> std::ops::DerefMut for PooledObject<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.object.as_mut().unwrap()
+        self.object
+            .as_mut()
+            .expect("PooledObject should always contain an object")
     }
 }
 
 impl<T> Drop for PooledObject<T> {
     fn drop(&mut self) {
         if let Some(obj) = self.object.take() {
-            let mut objects = self.pool.lock().unwrap();
-            objects.push(obj);
+            if let Ok(mut objects) = self.pool.lock() {
+                objects.push(obj);
+            }
+            // If we can't acquire the lock, we simply let the object be dropped
+            // This is safer than panicking in a destructor
         }
     }
 }
@@ -485,15 +495,31 @@ mod tests {
     fn test_object_pool() {
         let pool = ObjectPool::new(2, Vec::<i32>::new);
 
-        let mut obj1 = pool.get();
+        let mut obj1 = pool.get().expect("Should get object from pool");
         obj1.push(1);
         assert_eq!(obj1.len(), 1);
 
         drop(obj1);
 
-        let _obj2 = pool.get();
+        let _obj2 = pool.get().expect("Should get object from pool");
         // プールから再利用されるが、内容はクリアされていない可能性がある
         // 実際の使用では、オブジェクトの初期化が必要
+    }
+
+    #[test]
+    fn test_object_pool_drop_safety() {
+        // Test that dropping a PooledObject doesn't panic even if mutex is problematic
+        let pool = ObjectPool::new(1, Vec::<i32>::new);
+
+        let obj = pool.get().expect("Should get object from pool");
+        // Object will be returned to pool on drop
+        drop(obj);
+
+        // Get the object again to verify pool still works
+        let obj2 = pool.get().expect("Should get object from pool after drop");
+        drop(obj2);
+
+        // Test passed if we got here without panicking
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, serde::Serialize)]
 pub struct ModelPricing {
     #[serde(rename = "input_cost_per_token")]
     pub input_cost_per_token: Option<f64>,

@@ -1,3 +1,4 @@
+use crate::billing_blocks::BillingBlockManager;
 use crate::models::{DailyUsageMap, SessionUsageMap, TokenUsage, UsageRecord};
 use crate::models_registry::ModelsRegistry;
 use crate::pricing::{PricingFetcher, get_fallback_pricing};
@@ -8,6 +9,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 
 pub struct UsageParser {
@@ -45,7 +47,7 @@ impl UsageParser {
         })
     }
 
-    pub fn parse_all(&self) -> Result<(DailyUsageMap, SessionUsageMap)> {
+    pub fn parse_all(&self) -> Result<(DailyUsageMap, SessionUsageMap, BillingBlockManager)> {
         let jsonl_files = self.find_jsonl_files()?;
 
         if jsonl_files.is_empty() {
@@ -53,16 +55,22 @@ impl UsageParser {
                 "Warning: No JSONL files found in {}",
                 self.claude_dir.display()
             );
-            return Ok((HashMap::new(), HashMap::new()));
+            return Ok((HashMap::new(), HashMap::new(), BillingBlockManager::new()));
         }
+
+        // Use thread-safe billing block manager
+        let billing_manager = Arc::new(Mutex::new(BillingBlockManager::new()));
 
         let results: Vec<(DailyUsageMap, SessionUsageMap)> = jsonl_files
             .par_iter()
-            .filter_map(|file_path| match self.parse_file(file_path) {
-                Ok(result) => Some(result),
-                Err(e) => {
-                    eprintln!("Warning: Failed to parse {}: {}", file_path.display(), e);
-                    None
+            .filter_map(|file_path| {
+                let billing_manager_clone = Arc::clone(&billing_manager);
+                match self.parse_file_with_billing(file_path, billing_manager_clone) {
+                    Ok(result) => Some(result),
+                    Err(e) => {
+                        eprintln!("Warning: Failed to parse {}: {}", file_path.display(), e);
+                        None
+                    }
                 }
             })
             .collect();
@@ -89,7 +97,12 @@ impl UsageParser {
             }
         }
 
-        Ok((daily_map, session_map))
+        // Extract the billing manager from Arc<Mutex<>>
+        let billing_manager = Arc::try_unwrap(billing_manager)
+            .map(|mutex| mutex.into_inner().unwrap())
+            .unwrap_or_else(|arc| arc.lock().unwrap().clone());
+
+        Ok((daily_map, session_map, billing_manager))
     }
 
     fn find_jsonl_files(&self) -> Result<Vec<PathBuf>> {
@@ -120,6 +133,92 @@ impl UsageParser {
         Ok(files)
     }
 
+    fn parse_file_with_billing(
+        &self,
+        file_path: &Path,
+        billing_manager: Arc<Mutex<BillingBlockManager>>,
+    ) -> Result<(DailyUsageMap, SessionUsageMap)> {
+        let file = File::open(file_path)
+            .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
+        let reader = BufReader::new(file);
+
+        let mut daily_map = HashMap::new();
+        let mut session_map = HashMap::new();
+
+        let session_info = self.extract_session_info(file_path)?;
+
+        for line in reader.lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            match serde_json::from_str::<UsageRecord>(&line) {
+                Ok(record) => {
+                    // Skip records without timestamp or usage data
+                    if let Some(timestamp) = record.timestamp {
+                        if record
+                            .message
+                            .as_ref()
+                            .and_then(|m| m.usage.as_ref())
+                            .is_some()
+                            && self.should_include_record(&record)
+                        {
+                            let mut usage = TokenUsage::from(&record);
+
+                            // Always recalculate cost to match ccusage's behavior
+                            // This ensures exact alignment with ccusage's calculation methodology
+                            if let Some(model_name) = record.get_model_name() {
+                                let calculated_cost =
+                                    self.calculate_cost_for_record(&record, model_name);
+                                if calculated_cost > 0.0 {
+                                    usage.total_cost = calculated_cost;
+                                }
+                                // If calculation fails, fall back to costUSD if available
+                                else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
+                                    usage.total_cost = record.cost_usd.unwrap_or(0.0);
+                                }
+                            }
+                            // If no model name, use costUSD if available
+                            else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
+                                usage.total_cost = record.cost_usd.unwrap_or(0.0);
+                            }
+
+                            let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+
+                            // Add to daily map
+                            daily_map
+                                .entry(date)
+                                .or_insert_with(TokenUsage::default)
+                                .add(&usage);
+
+                            // Add to session map
+                            let session_entry = session_map
+                                .entry(session_info.clone())
+                                .or_insert((TokenUsage::default(), timestamp));
+                            session_entry.0.add(&usage);
+                            if timestamp > session_entry.1 {
+                                session_entry.1 = timestamp;
+                            }
+
+                            // Add to billing blocks
+                            if let Ok(mut manager) = billing_manager.lock() {
+                                manager.add_usage(timestamp, &usage, Some(&session_info));
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    // Silently skip invalid JSON lines as per spec
+                    continue;
+                }
+            }
+        }
+
+        Ok((daily_map, session_map))
+    }
+
+    #[allow(dead_code)]
     fn parse_file(&self, file_path: &Path) -> Result<(DailyUsageMap, SessionUsageMap)> {
         let file = File::open(file_path)
             .with_context(|| format!("Failed to open file: {}", file_path.display()))?;

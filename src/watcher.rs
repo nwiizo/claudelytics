@@ -83,7 +83,7 @@ impl UsageWatcher {
         println!("\n🕐 Last updated: {}", timestamp);
         println!("{}", "─".repeat(80));
 
-        let (daily_map, _) = self.parser.parse_all()?;
+        let (daily_map, _, _) = self.parser.parse_all()?;
 
         if !daily_map.is_empty() {
             let report = generate_daily_report_sorted(daily_map, None, None);

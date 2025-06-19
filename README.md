@@ -15,13 +15,15 @@ A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token c
 - **📊 Daily Reports**: Analyze usage patterns by day with token counts and costs
 - **📈 Session Reports**: Break down usage by individual Claude Code sessions  
 - **💰 Cost Tracking**: Quick cost summaries for today, specific dates, or totals
+- **⏰ 5-Hour Billing Blocks**: Track usage in Claude's actual billing periods (00:00-05:00, 05:00-10:00, etc. UTC)
 - **🔍 Flexible Filtering**: Filter data by date ranges with `--since` and `--until`
 - **🎯 Model Filtering**: Filter by specific Claude models (opus, sonnet, haiku) or model versions
 - **📋 Model Registry**: Future-proof model management with aliases and automatic recognition
+- **💾 Offline Pricing Cache**: 7-day cache for pricing data to work without internet connection
 
 ### Interactive & Real-time
 - **🎯 Interactive Mode**: peco-style fuzzy searchable session selector
-- **🎨 Enhanced TUI**: Full-featured terminal interface with 5 tabs and navigation
+- **🎨 Enhanced TUI**: Full-featured terminal interface with 6 tabs including billing blocks
 - **🚀 Advanced TUI**: Professional-grade analytics with 9 tabs, drill-down, comparison, and live monitoring
 - **👀 Watch Mode**: Real-time monitoring with automatic updates
 - **⚡ Today Filter**: `--today` flag for quick current day analysis
@@ -132,6 +134,14 @@ claudelytics cost --date 20241201
 
 # Export to CSV
 claudelytics export --daily --sessions --summary
+
+# 5-Hour Billing Blocks
+claudelytics billing-blocks         # Show billing blocks analysis
+claudelytics billing-blocks --json  # JSON output
+
+# Pricing Cache
+claudelytics pricing-cache          # Show cache status
+claudelytics pricing-cache --clear  # Clear cached pricing
 
 # Configuration management
 claudelytics config --show
@@ -266,11 +276,12 @@ A full-featured terminal interface with:
 - **📊 Overview Tab**: Enhanced summary with quick stats and visual elements
 - **📅 Daily Tab**: Color-coded daily usage with sorting and filtering
 - **📋 Sessions Tab**: Searchable session analytics with real-time filter
-- **📈 Charts Tab**: ASCII charts, cost trends, and token usage visualization  
+- **📈 Charts Tab**: ASCII charts, cost trends, and token usage visualization
+- **⏰ Billing Tab**: 5-hour billing blocks with cost analysis and pricing cache status
 - **❓ Help Tab**: Comprehensive help with keyboard shortcuts
 
 **Navigation:**
-- Use `1-5` keys or `Tab`/`Shift+Tab` to switch tabs
+- Use `1-6` keys or `Tab`/`Shift+Tab` to switch tabs
 - Use `j/k` or arrow keys to navigate tables
 - Press `/` to search, `s` to sort, `f` to filter by time
 - Press `r` to refresh, `e` to export, `c` to clear status

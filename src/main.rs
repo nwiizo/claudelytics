@@ -4,6 +4,8 @@
 //! Parses JSONL files from ~/.claude/projects/ and generates comprehensive reports.
 
 // Module declarations
+mod billing_blocks;
+mod claude_sessions;
 mod config;
 mod config_v2;
 mod display;
@@ -17,6 +19,7 @@ mod models_registry;
 mod parser;
 mod performance;
 mod pricing;
+mod pricing_cache;
 mod pricing_strategies;
 mod processing;
 mod reports;
@@ -346,6 +349,24 @@ enum Commands {
         )]
         date: Option<String>,
     },
+    #[command(about = "Show billing blocks (5-hour usage blocks)")]
+    #[command(
+        long_about = "Display usage organized by Claude's 5-hour billing blocks\n\nClaude uses 5-hour billing blocks for tracking usage. This command\nshows your usage patterns aligned with these actual billing periods.\n\nBILLING BLOCKS:\n  00:00-05:00 UTC  (Block 1)\n  05:00-10:00 UTC  (Block 2)\n  10:00-15:00 UTC  (Block 3)\n  15:00-20:00 UTC  (Block 4)\n  20:00-00:00 UTC  (Block 5)\n\nFEATURES:\n  - Shows usage within each 5-hour block\n  - Identifies peak usage periods\n  - Calculates average usage per block\n  - Displays usage patterns by time of day\n\nEXAMPLES:\n  claudelytics billing-blocks           # Show all billing blocks\n  claudelytics billing-blocks --today   # Today's blocks only\n  claudelytics billing-blocks --json    # JSON output\n  claudelytics --since 20240301 billing-blocks # From specific date"
+    )]
+    BillingBlocks {
+        #[arg(
+            long,
+            help = "Use classic table format",
+            long_help = "Display billing blocks in classic table format\nDefault: Enhanced visual format with summaries"
+        )]
+        classic: bool,
+        #[arg(
+            long,
+            help = "Show summary statistics",
+            long_help = "Include summary statistics\nShows: peak block, average usage, patterns by time"
+        )]
+        summary: bool,
+    },
     #[command(about = "Start Model Context Protocol (MCP) server")]
     #[command(
         long_about = "Start an MCP server to expose claudelytics data via the Model Context Protocol\n\nThe MCP server allows other applications to query claudelytics data through\na standardized protocol. Supports both stdio and HTTP transport methods.\n\nEXAMPLES:\n  claudelytics mcp-server                # Start stdio server\n  claudelytics mcp-server --http 8080    # Start HTTP server on port 8080\n  claudelytics mcp-server --list-tools   # Show available MCP tools\n  claudelytics mcp-server --list-resources # Show available MCP resources"
@@ -376,6 +397,30 @@ enum Commands {
     #[command(about = "Test resume functionality")]
     #[command(long_about = "Test command to verify resume functionality without starting TUI")]
     TestResume,
+    #[command(about = "Manage offline pricing cache")]
+    #[command(
+        long_about = "Manage the offline pricing cache for model costs\n\nThe pricing cache allows claudelytics to work without internet connection\nby storing model pricing data locally. The cache is automatically updated\nwhen online and remains valid for 7 days.\n\nEXAMPLES:\n  claudelytics pricing-cache --show    # Show current cache status\n  claudelytics pricing-cache --clear   # Clear the cache\n  claudelytics pricing-cache --update  # Force update the cache"
+    )]
+    PricingCache {
+        #[arg(
+            long,
+            help = "Show cache status and contents",
+            long_help = "Display current cache status including age, validity, and stored pricing data"
+        )]
+        show: bool,
+        #[arg(
+            long,
+            help = "Clear the pricing cache",
+            long_help = "Remove the cached pricing data, forcing use of fallback pricing"
+        )]
+        clear: bool,
+        #[arg(
+            long,
+            help = "Update the pricing cache",
+            long_help = "Force update the pricing cache with latest data (currently uses fallback data)"
+        )]
+        update: bool,
+    },
 }
 
 /// Application entry point
@@ -475,7 +520,7 @@ fn run() -> Result<()> {
     }
 
     // Parse all usage data
-    let (daily_map, session_map) = parser.parse_all()?;
+    let (daily_map, session_map, billing_manager) = parser.parse_all()?;
 
     // Check if we have any data
     if daily_map.is_empty() && session_map.is_empty() {
@@ -522,7 +567,7 @@ fn run() -> Result<()> {
 
     // Handle test resume command
     if let Some(Commands::TestResume) = &cli.command {
-        return handle_test_resume_command(daily_report, session_report);
+        return handle_test_resume_command(daily_report, session_report, &billing_manager);
     }
 
     // Handle MCP server command
@@ -548,7 +593,7 @@ fn run() -> Result<()> {
 
     // Handle TUI flag or command
     if cli.tui {
-        let mut tui_app = TuiApp::new(daily_report, session_report);
+        let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
 
         // Try to restore previous session state
         if let Ok(state) = TuiSessionState::load() {
@@ -667,7 +712,7 @@ fn run() -> Result<()> {
             }
         }
         Commands::Tui => {
-            let mut tui_app = TuiApp::new(daily_report, session_report);
+            let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
 
             // Try to restore previous session state
             if let Ok(state) = TuiSessionState::load() {
@@ -686,6 +731,16 @@ fn run() -> Result<()> {
         //     let mut analytics_tui_app = AnalyticsTuiApp::new(daily_report, session_report);
         //     analytics_tui_app.run()?;
         // } // Temporarily disabled - work in progress
+        Commands::BillingBlocks { classic, summary } => {
+            handle_billing_blocks_command(&billing_manager, cli.json, classic, summary);
+        }
+        Commands::PricingCache {
+            show,
+            clear,
+            update,
+        } => {
+            handle_pricing_cache_command(show, clear, update)?;
+        }
         _ => {} // Other commands handled above
     }
 
@@ -1011,11 +1066,12 @@ fn handle_debug_state_command() -> Result<()> {
 fn handle_test_resume_command(
     daily_report: crate::models::DailyReport,
     session_report: crate::models::SessionReport,
+    billing_manager: &billing_blocks::BillingBlockManager,
 ) -> Result<()> {
     print_info("🧪 Testing resume functionality...");
 
     // Create a test TUI app and set some state
-    let mut tui_app = TuiApp::new(daily_report, session_report);
+    let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
 
     // Set some test state
     tui_app.set_current_tab(2); // Sessions tab
@@ -1043,6 +1099,7 @@ fn handle_test_resume_command(
     let mut new_tui_app = TuiApp::new(
         tui_app.get_daily_report().clone(),
         tui_app.get_session_report().clone(),
+        billing_manager.clone(),
     );
     restore_tui_state(&mut new_tui_app, &loaded_state);
 
@@ -1094,6 +1151,225 @@ fn handle_test_resume_command(
         print_info("🎉 Resume functionality test PASSED!");
     } else {
         print_error("❌ Resume functionality test FAILED!");
+    }
+
+    Ok(())
+}
+
+/// Handle billing blocks command
+fn handle_billing_blocks_command(
+    billing_manager: &billing_blocks::BillingBlockManager,
+    json: bool,
+    classic: bool,
+    show_summary: bool,
+) {
+    let report = billing_manager.generate_report();
+
+    if json {
+        // JSON output
+        if let Ok(json_str) = serde_json::to_string_pretty(&report) {
+            println!("{}", json_str);
+        }
+    } else if classic {
+        // Classic table format
+        display_billing_blocks_table(&report);
+    } else {
+        // Enhanced format
+        display_billing_blocks_enhanced(&report, show_summary);
+    }
+}
+
+/// Display billing blocks in enhanced format
+fn display_billing_blocks_enhanced(
+    report: &billing_blocks::BillingBlockReport,
+    show_summary: bool,
+) {
+    use colored::Colorize;
+
+    println!(
+        "\n{}",
+        "📊 Claude Usage by 5-Hour Billing Blocks".bold().cyan()
+    );
+    println!("{}", "═".repeat(50).blue());
+
+    if report.blocks.is_empty() {
+        print_warning("No billing block data found");
+        return;
+    }
+
+    // Display blocks by date
+    let mut current_date = String::new();
+    for block in &report.blocks {
+        if block.date != current_date {
+            println!("\n📅 {}", block.date.bold());
+            println!("{}", "─".repeat(40));
+            current_date = block.date.clone();
+        }
+
+        let cost_color = if block.usage.total_cost > 1.0 {
+            "red"
+        } else if block.usage.total_cost > 0.1 {
+            "yellow"
+        } else {
+            "green"
+        };
+
+        println!(
+            "  {} │ {} tokens │ ${:.4} │ {} sessions",
+            block.time_range.cyan(),
+            format!("{:>8}", block.usage.total_tokens()).white(),
+            block.usage.total_cost.to_string().color(cost_color),
+            block.session_count
+        );
+    }
+
+    if show_summary {
+        println!("\n{}", "📈 Summary Statistics".bold().cyan());
+        println!("{}", "─".repeat(40));
+
+        // Peak usage block
+        if let Some(ref peak) = report.peak_block {
+            println!(
+                "Peak Block: {} {} ({} tokens)",
+                peak.date,
+                peak.time_range,
+                peak.usage.total_tokens()
+            );
+        }
+
+        // Average usage
+        println!(
+            "Average per Block: {} tokens, ${:.4}",
+            report.average_per_block.total_tokens(),
+            report.average_per_block.total_cost
+        );
+
+        // Usage by time of day
+        println!("\n⏰ Usage by Time of Day:");
+        let mut time_blocks: Vec<_> = report.usage_by_time.iter().collect();
+        time_blocks.sort_by_key(|(time, _)| *time);
+
+        for (time, usage) in time_blocks {
+            let bar_length = (usage.total_tokens() as f64 / 1000.0).min(40.0) as usize;
+            let bar = "█".repeat(bar_length);
+            println!(
+                "  {} │ {} {} tokens",
+                time.cyan(),
+                bar.green(),
+                usage.total_tokens()
+            );
+        }
+    }
+
+    // Total summary
+    println!("\n{}", "💰 Total Usage".bold().cyan());
+    println!("{}", "─".repeat(40));
+    println!("Total Tokens: {}", report.total_usage.total_tokens());
+    println!("Total Cost: ${:.4}", report.total_usage.total_cost);
+    println!("Active Blocks: {}", report.blocks.len());
+}
+
+/// Display billing blocks in table format
+fn display_billing_blocks_table(report: &billing_blocks::BillingBlockReport) {
+    use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_header(vec![
+            Cell::new("Date"),
+            Cell::new("Time Block"),
+            Cell::new("Input Tokens"),
+            Cell::new("Output Tokens"),
+            Cell::new("Total Tokens"),
+            Cell::new("Cost ($)"),
+            Cell::new("Sessions"),
+        ]);
+
+    for block in &report.blocks {
+        table.add_row(vec![
+            Cell::new(&block.date),
+            Cell::new(&block.time_range),
+            Cell::new(block.usage.input_tokens.to_string()),
+            Cell::new(block.usage.output_tokens.to_string()),
+            Cell::new(block.usage.total_tokens().to_string()),
+            Cell::new(format!("{:.4}", block.usage.total_cost)),
+            Cell::new(block.session_count.to_string()),
+        ]);
+    }
+
+    // Add totals row
+    table.add_row(vec![
+        Cell::new("TOTAL").fg(Color::Yellow),
+        Cell::new(""),
+        Cell::new(report.total_usage.input_tokens.to_string()).fg(Color::Yellow),
+        Cell::new(report.total_usage.output_tokens.to_string()).fg(Color::Yellow),
+        Cell::new(report.total_usage.total_tokens().to_string()).fg(Color::Yellow),
+        Cell::new(format!("{:.4}", report.total_usage.total_cost)).fg(Color::Yellow),
+        Cell::new(report.blocks.len().to_string()).fg(Color::Yellow),
+    ]);
+
+    println!("{}", table);
+}
+
+/// Handle pricing cache command
+fn handle_pricing_cache_command(show: bool, clear: bool, update: bool) -> Result<()> {
+    use pricing_cache::PricingCache;
+
+    if show {
+        println!("📦 Pricing Cache Status");
+        println!("{}", "─".repeat(40));
+
+        match PricingCache::load()? {
+            Some(cache) => {
+                println!("✅ Cache found");
+                println!(
+                    "Last Updated: {}",
+                    cache.last_updated.format("%Y-%m-%d %H:%M:%S UTC")
+                );
+                println!(
+                    "Valid: {}",
+                    if cache.is_valid() {
+                        "Yes"
+                    } else {
+                        "No (expired)"
+                    }
+                );
+                println!("Version: {}", cache.version);
+                println!("Models Cached: {}", cache.pricing_data.len());
+
+                if cache.is_valid() {
+                    println!("\n📊 Cached Models:");
+                    for model_name in cache.pricing_data.keys() {
+                        println!("  - {}", model_name);
+                    }
+                } else {
+                    print_warning("Cache is expired and will be ignored");
+                }
+            }
+            None => {
+                println!("❌ No cache found");
+                println!("Using built-in fallback pricing data");
+            }
+        }
+    } else if clear {
+        print_info("Clearing pricing cache...");
+        PricingCache::clear()?;
+        println!("✅ Pricing cache cleared successfully");
+    } else if update {
+        print_info("Updating pricing cache...");
+
+        // For now, just create a new cache with fallback data
+        let new_cache = PricingCache::new();
+        new_cache.save()?;
+
+        println!("✅ Pricing cache updated successfully");
+        println!("Cache will remain valid for 7 days");
+    } else {
+        // Show help if no flags provided
+        println!("Use --show, --clear, or --update to manage the pricing cache");
+        println!("Run 'claudelytics pricing-cache --help' for more information");
     }
 
     Ok(())

@@ -1,6 +1,6 @@
 [package]
 name = "claudelytics"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2024"
 description = "A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs"
 authors = ["nwiizo <nwiizo@gmail.com>"]
@@ -32,5 +32,6 @@ serde_yaml = "0.9"
 ratatui = "0.28"
 copypasta = "0.10"
 regex = "1.10"
+dirs = "5.0"
 
 [dev-dependencies]

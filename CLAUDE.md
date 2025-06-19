@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Claudelytics is a Rust CLI tool for analyzing Claude Code usage patterns and costs. It parses JSONL files from the `~/.claude/projects/` directory structure and generates comprehensive reports on token usage, costs, and session analytics.
 
-**Current Version**: 0.3.0 - Major feature release with monthly analytics, advanced sorting, and MCP integration
+**Current Version**: 0.4.0 - Major release with 5-hour billing blocks, offline pricing cache, and enhanced TUI
 
 ## Build and Development Commands
 
@@ -30,6 +30,9 @@ cargo fmt
 # Check formatting (for CI)
 cargo fmt --check
 
+# Run clippy linter (REQUIRED before commits)
+cargo clippy -- -D warnings
+
 # Run with release optimizations
 cargo run --release -- daily --since 20240101
 
@@ -46,6 +49,16 @@ cargo run -- --tui                  # Alternative flag format
 # Resume last TUI session
 cargo run -- --resume               # Resume last TUI session with saved state
 
+# 5-Hour Billing Blocks (matches Claude's actual billing periods)
+cargo run -- billing-blocks         # Show billing blocks analysis
+cargo run -- billing-blocks --json  # JSON output
+cargo run -- billing-blocks --since 20240101  # Filter by date
+
+# Pricing Cache Management
+cargo run -- pricing-cache          # Show pricing cache status
+cargo run -- pricing-cache --update # Update cache (placeholder for future API)
+cargo run -- pricing-cache --clear  # Clear cached pricing data
+
 # Analytics Studio TUI mode (data science features) - PLANNED
 # cargo run -- analytics-tui         # Comprehensive analytics studio
 # cargo run -- --analytics-tui       # Alternative flag format
@@ -57,12 +70,17 @@ cargo run -- export --daily --sessions --summary -o report
 cargo run -- config --show
 cargo run -- config --set-path /path/to/claude
 
+# Monthly analytics
+cargo run -- monthly                # Show monthly usage summary
+cargo run -- monthly --json         # Monthly data in JSON format
+
 # Cost display options
 cargo run -- cost                    # Show total cost summary
 cargo run -- cost --today           # Show today's cost only
 cargo run -- cost --date 20240101   # Show cost for specific date
 cargo run -- --today                # Show today's usage data
 cargo run -- daily --today          # Show today's daily report
+
 
 # Output format options
 cargo run -- daily                  # Enhanced format (default)
@@ -82,6 +100,9 @@ cargo run -- --model-filter opus --today daily  # Combine filters
 cargo run -- --by-model              # Show usage breakdown by model family
 CLAUDELYTICS_TABLE_FORMAT=true cargo run -- --by-model  # Use table format for better alignment
 CLAUDELYTICS_DISPLAY_FORMAT=table cargo run -- --by-model  # Alternative table format
+
+# MCP server mode
+cargo run -- mcp-server              # Start MCP server for IDE integration
 ```
 
 ## Pre-commit Requirements
@@ -93,20 +114,6 @@ CLAUDELYTICS_DISPLAY_FORMAT=table cargo run -- --by-model  # Alternative table f
 
 These checks are enforced in CI/CD and will cause the build to fail if not followed.
 
-## Installation and Shell Integration
-
-### Building and Installing
-
-```bash
-# Build release version
-cargo build --release
-
-# Install to system (requires ~/.cargo/bin in PATH)
-cargo install --path .
-
-# Or copy binary to a directory in your PATH
-sudo cp target/release/claudelytics /usr/local/bin/
-```
 
 ### Shell Integration
 
@@ -318,10 +325,19 @@ end
 - **display.rs**: Output formatting (table and JSON) with colored terminal output
 - **reports.rs**: Report generation logic for daily and session analytics
 - **interactive.rs**: peco-style interactive session selector with fuzzy search
-- **tui.rs**: Enhanced terminal user interface with advanced features, command palette, bookmarks, and session comparison
+- **tui.rs**: Enhanced terminal user interface with advanced features, command palette, bookmarks, session comparison, and billing blocks view
 - **watcher.rs**: Real-time file monitoring for live usage updates
 - **export.rs**: CSV export functionality for daily, session, and summary reports
-- **config.rs**: Configuration management with YAML-based settings
+- **config.rs / config_v2.rs**: Configuration management with YAML-based settings
+- **pricing.rs / pricing_strategies.rs**: Cost calculation and pricing models
+- **pricing_cache.rs**: Offline pricing cache with 7-day validity
+- **billing_blocks.rs**: 5-hour billing block tracking aligned with Claude's billing periods
+- **mcp.rs**: MCP (Model Context Protocol) server integration
+- **state.rs**: TUI session state management and persistence
+- **error.rs**: Custom error types and error handling
+- **domain.rs**: Core business domain logic
+- **processing.rs**: Data processing utilities
+- **performance.rs**: Performance monitoring and optimization
 
 ### Key Data Flow
 1. **UsageParser** scans `~/.claude/projects/` recursively for `*.jsonl` files
@@ -376,24 +392,28 @@ The tool expects Claude Code JSONL records with this structure:
 - **Model Registry**: Flexible model management system with aliases and future model support
 - **List Models**: `--list-models` flag to display all registered models with their families and aliases
 - **Model Breakdown Display**: `--by-model` flag with multiple format options (default, table, minimal, json)
+- **5-Hour Billing Blocks**: Track usage in Claude's actual billing periods (00:00-05:00, 05:00-10:00, etc. UTC)
+- **Offline Pricing Cache**: 7-day cache for pricing data to work without internet connection
+- **TUI Billing Blocks View**: Dedicated tab in TUI showing billing block analysis with summary statistics
 
 ### Enhanced TUI Features (claudelytics tui)
-- **Multi-tab Interface**: Overview, Daily, Sessions, Charts, Resume, and Help tabs
+- **Multi-tab Interface**: Overview, Daily, Sessions, Charts, Billing, Resume, and Help tabs
 - **Command Palette**: Quick action access with Ctrl+P and fuzzy search
 - **Bookmark System**: Save and organize important sessions with 'b' key
 - **Session Comparison**: Mark sessions for comparison with 'x' key  
 - **Efficiency Sorting**: Sort sessions by efficiency (tokens per dollar)
 - **Resume Tab**: View recent sessions, bookmarks, and session history
+- **Billing Tab**: 5-hour billing blocks with summary, peak usage, and pricing cache status
 - **Keyboard Navigation**: vim-style (j/k) and arrow key navigation
 - **Visual Elements**: Cost gauges, colored tables, ASCII charts, and formatted cards
 - **Real-time Updates**: Live data display with scroll support
-- **Interactive Tables**: Navigate through daily and session data
+- **Interactive Tables**: Navigate through daily, session, and billing block data
 - **Search & Filter**: Real-time search and filtering capabilities
 - **Multiple Sort Options**: Sort by date, cost, tokens, efficiency, or project
 - **Help System**: Built-in help with keyboard shortcuts
 
 
-## Advanced Analytics Data Structures (v0.2.0+)
+## Advanced Analytics Data Structures
 
 The models.rs module now includes comprehensive data science-grade analytics structures supporting advanced pattern analysis, machine learning insights, and predictive analytics:
 
@@ -448,3 +468,131 @@ All analytics structures support:
 - **Performance Metrics**: Efficiency scoring, optimization opportunities, and improvement tracking
 - **Automated Reasoning**: AI-generated insights with evidence-based recommendations
 - **Risk Management**: Probability assessment, impact analysis, and mitigation strategies
+
+## Testing
+
+The project has comprehensive test coverage across all major modules:
+- **Unit Tests**: Core functionality testing in models, parser, display, and report modules
+- **Integration Tests**: End-to-end testing of CLI commands and data processing
+- **Error Handling Tests**: Comprehensive error scenario coverage
+- **Performance Tests**: Benchmarks for critical paths using criterion
+
+Run tests with:
+```bash
+cargo test                  # Run all tests
+cargo test -- --nocapture  # Show test output
+cargo test <module_name>   # Run tests for specific module
+cargo test --release       # Run tests in release mode
+```
+
+## Release Process
+
+### Creating a New Release
+
+1. **Update version in Cargo.toml**
+   ```bash
+   # Edit Cargo.toml and update version field
+   cargo build  # Verify it builds
+   ```
+
+2. **Run pre-release checks**
+   ```bash
+   cargo test
+   cargo fmt
+   cargo clippy -- -D warnings
+   cargo build --release
+   ```
+
+3. **Create and push tag**
+   ```bash
+   git tag v0.3.3
+   git push origin v0.3.3
+   ```
+
+4. **GitHub Actions will automatically**:
+   - Build binaries for all platforms (Linux, Windows, macOS)
+   - Create GitHub release with artifacts
+   - Publish to crates.io
+   - Generate SHA256 checksums
+
+5. **Update Homebrew formula** (Formula/claudelytics.rb):
+   ```bash
+   # Get SHA256 for each platform
+   curl -fsSL https://github.com/nwiizo/claudelytics/releases/download/v0.3.3/claudelytics-x86_64-apple-darwin.tar.gz | shasum -a 256
+   curl -fsSL https://github.com/nwiizo/claudelytics/releases/download/v0.3.3/claudelytics-aarch64-apple-darwin.tar.gz | shasum -a 256
+   # Update Formula/claudelytics.rb with new SHAs
+   ```
+
+### Cross-Platform Building
+
+```bash
+# Add rust targets if needed
+rustup target add x86_64-unknown-linux-gnu
+rustup target add x86_64-unknown-linux-musl
+rustup target add x86_64-pc-windows-msvc
+rustup target add x86_64-apple-darwin
+rustup target add aarch64-apple-darwin
+
+# Build for specific targets
+cargo build --release --target x86_64-unknown-linux-gnu
+cargo build --release --target x86_64-unknown-linux-musl
+cargo build --release --target x86_64-pc-windows-msvc
+cargo build --release --target x86_64-apple-darwin
+cargo build --release --target aarch64-apple-darwin
+```
+
+## CI/CD Pipeline
+
+### GitHub Actions Workflows
+
+1. **CI Pipeline** (.github/workflows/ci.yml):
+   - Triggers on: push to main, pull requests
+   - Runs on: Ubuntu, Windows, macOS
+   - Checks:
+     ```bash
+     cargo fmt --all -- --check
+     cargo clippy -- -D warnings
+     cargo test --verbose
+     cargo build --verbose
+     ```
+
+2. **Release Pipeline** (.github/workflows/release.yml):
+   - Triggers on: version tags (v*)
+   - Builds release binaries for all platforms
+   - Creates GitHub release with artifacts
+   - Publishes to crates.io automatically
+
+### Local CI Checks (run before pushing)
+
+```bash
+# Run the same checks as CI
+cargo fmt --all -- --check
+cargo clippy -- -D warnings
+cargo test --verbose
+cargo build --verbose --release
+```
+
+## Installation Methods
+
+### Quick Install Script
+```bash
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash
+```
+
+### Manual Binary Installation
+```bash
+# Download latest release
+curl -LO https://github.com/nwiizo/claudelytics/releases/latest/download/claudelytics-$(uname -m)-$(uname -s | tr '[:upper:]' '[:lower:]').tar.gz
+tar -xzf claudelytics-*.tar.gz
+sudo mv claudelytics /usr/local/bin/
+```
+
+### Package Managers
+```bash
+# Cargo (Rust developers)
+cargo install claudelytics
+
+# Homebrew (macOS/Linux)
+brew tap nwiizo/claudelytics
+brew install claudelytics
+```

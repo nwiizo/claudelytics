@@ -1,5 +1,9 @@
-use crate::models::{Command, CommandAction, DailyReport, SessionReport};
+use crate::billing_blocks::BillingBlockManager;
+use crate::claude_sessions::ClaudeSessionParser;
+use crate::models::{ClaudeSession, Command, CommandAction, DailyReport, SessionReport};
+use crate::pricing_cache::PricingCache;
 use anyhow::Result;
+use chrono::Local;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::{
     event::{
@@ -28,6 +32,7 @@ enum Tab {
     Daily,
     Sessions,
     Charts,
+    BillingBlocks,
     Resume,
     Help,
 }
@@ -63,6 +68,7 @@ struct ResumeSession {
     modified: String,
     messages: String,
     summary: String,
+    session_data: Option<ClaudeSession>,
 }
 
 #[derive(Debug)]
@@ -96,10 +102,29 @@ pub struct TuiApp {
     resume_sessions: Vec<ResumeSession>,
     resume_table_state: TableState,
     resume_loading: bool,
+    // Billing blocks
+    billing_manager: BillingBlockManager,
+    billing_blocks_table_state: TableState,
+    billing_blocks_scroll_state: ScrollbarState,
+    show_billing_summary: bool,
+    // Pricing cache status
+    pricing_cache_status: Option<PricingCacheStatus>,
+}
+
+#[derive(Debug, Clone)]
+struct PricingCacheStatus {
+    exists: bool,
+    valid: bool,
+    last_updated: String,
+    model_count: usize,
 }
 
 impl TuiApp {
-    pub fn new(daily_report: DailyReport, session_report: SessionReport) -> Self {
+    pub fn new(
+        daily_report: DailyReport,
+        session_report: SessionReport,
+        billing_manager: BillingBlockManager,
+    ) -> Self {
         let mut daily_table_state = TableState::default();
         daily_table_state.select(Some(0));
 
@@ -108,6 +133,23 @@ impl TuiApp {
 
         let session_scroll_state = ScrollbarState::new(session_report.sessions.len());
         let available_commands = Self::create_available_commands();
+
+        let billing_report = billing_manager.generate_report();
+        let billing_blocks_scroll_state = ScrollbarState::new(billing_report.blocks.len());
+
+        // Check pricing cache status
+        let pricing_cache_status = match PricingCache::load() {
+            Ok(Some(cache)) => Some(PricingCacheStatus {
+                exists: true,
+                valid: cache.is_valid(),
+                last_updated: cache
+                    .last_updated
+                    .format("%Y-%m-%d %H:%M:%S UTC")
+                    .to_string(),
+                model_count: cache.pricing_data.len(),
+            }),
+            _ => None,
+        };
 
         let mut app = Self {
             daily_report: daily_report.clone(),
@@ -136,6 +178,11 @@ impl TuiApp {
             resume_sessions: Vec::new(),
             resume_table_state: TableState::default(),
             resume_loading: false,
+            billing_manager,
+            billing_blocks_table_state: TableState::default(),
+            billing_blocks_scroll_state,
+            show_billing_summary: true,
+            pricing_cache_status,
         };
 
         // Apply initial filters and sorting
@@ -244,9 +291,40 @@ impl TuiApp {
     }
 
     fn fetch_claude_sessions(&self) -> Result<Vec<ResumeSession>> {
-        // Always use mock data to prevent hanging
-        // Real Claude integration would require proper async handling
-        Ok(self.get_mock_sessions())
+        // Load actual Claude sessions
+        let parser = ClaudeSessionParser::new(None);
+
+        match parser.get_recent_sessions(20) {
+            Ok(sessions) => {
+                let resume_sessions = sessions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, session)| {
+                        let time_diff = Local::now().signed_duration_since(session.modified_at);
+                        let modified = if time_diff.num_hours() < 1 {
+                            format!("{} min ago", time_diff.num_minutes())
+                        } else if time_diff.num_hours() < 24 {
+                            format!("{} hr ago", time_diff.num_hours())
+                        } else {
+                            format!("{} days ago", time_diff.num_days())
+                        };
+
+                        ResumeSession {
+                            number: idx + 1,
+                            modified,
+                            messages: session.message_count.to_string(),
+                            summary: session.summary.clone(),
+                            session_data: Some(session),
+                        }
+                    })
+                    .collect();
+                Ok(resume_sessions)
+            }
+            Err(_) => {
+                // Fallback to mock data if real sessions fail to load
+                Ok(self.get_mock_sessions())
+            }
+        }
     }
 
     fn get_mock_sessions(&self) -> Vec<ResumeSession> {
@@ -256,30 +334,35 @@ impl TuiApp {
                 modified: "3 days ago".to_string(),
                 messages: "5".to_string(),
                 summary: "Advanced Rust TUI Analytics Implementation".to_string(),
+                session_data: None,
             },
             ResumeSession {
                 number: 2,
                 modified: "3 days ago".to_string(),
                 messages: "141".to_string(),
                 summary: "Rust CLI Help Docs & Release Workflow Optimization".to_string(),
+                session_data: None,
             },
             ResumeSession {
                 number: 3,
                 modified: "4 days ago".to_string(),
                 messages: "37".to_string(),
                 summary: "Claudelytics: Advanced Analytics TUI Development".to_string(),
+                session_data: None,
             },
             ResumeSession {
                 number: 4,
                 modified: "4 days ago".to_string(),
                 messages: "93".to_string(),
                 summary: "Claude's Advanced TUI Analytics Development".to_string(),
+                session_data: None,
             },
             ResumeSession {
                 number: 5,
                 modified: "4 days ago".to_string(),
                 messages: "10".to_string(),
                 summary: "Rust CLI Tool Evolution: Claude AI Usage Analytics".to_string(),
+                session_data: None,
             },
         ]
     }
@@ -491,7 +574,19 @@ impl TuiApp {
                 self.refresh_data()?;
             }
             KeyCode::Char('s') => {
-                self.cycle_sort_mode();
+                if self.current_tab == Tab::BillingBlocks {
+                    self.show_billing_summary = !self.show_billing_summary;
+                    self.status_message = Some(format!(
+                        "Billing summary {}",
+                        if self.show_billing_summary {
+                            "shown"
+                        } else {
+                            "hidden"
+                        }
+                    ));
+                } else {
+                    self.cycle_sort_mode();
+                }
             }
             KeyCode::Char('f') => {
                 self.cycle_time_filter();
@@ -861,6 +956,7 @@ impl TuiApp {
             "📅 Daily",
             "📋 Sessions",
             "📈 Charts",
+            "⏰ Billing",
             "🔄 Resume",
             "❓ Help",
         ];
@@ -885,6 +981,7 @@ impl TuiApp {
             Tab::Daily => self.render_daily(f, main_area),
             Tab::Sessions => self.render_sessions(f, main_area),
             Tab::Charts => self.render_charts(f, main_area),
+            Tab::BillingBlocks => self.render_billing_blocks(f, main_area),
             Tab::Resume => self.render_resume(f, main_area),
             Tab::Help => self.render_help(f, main_area),
         }
@@ -1982,6 +2079,268 @@ impl TuiApp {
         }
     }
 
+    fn render_billing_blocks(&mut self, f: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(if self.show_billing_summary { 12 } else { 3 }),
+                Constraint::Min(0),
+            ])
+            .split(area);
+
+        let report = self.billing_manager.generate_report();
+
+        // Summary section
+        if self.show_billing_summary {
+            // Find current block if it exists
+            let current_block = self.billing_manager.get_current_block();
+            let current_block_cost = current_block.map(|b| b.usage.total_cost).unwrap_or(0.0);
+            let current_block_info = current_block
+                .map(|b| {
+                    format!(
+                        "{} - {}",
+                        b.start_time.format("%H:%M UTC"),
+                        b.end_time.format("%H:%M UTC")
+                    )
+                })
+                .unwrap_or_else(|| "No active block".to_string());
+
+            let summary_text = vec![
+                Line::from(vec![
+                    Span::styled("💰 Current Block Cost: ", Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("${:.4}", current_block_cost),
+                        Style::default()
+                            .fg(if current_block_cost > 5.0 {
+                                Color::Red
+                            } else if current_block_cost > 2.5 {
+                                Color::Yellow
+                            } else {
+                                Color::Green
+                            })
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("📊 Total Blocks: ", Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("{}", report.blocks.len()),
+                        Style::default()
+                            .fg(Color::Blue)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("⏰ Current Period: ", Style::default().fg(Color::White)),
+                    Span::styled(current_block_info, Style::default().fg(Color::Cyan)),
+                ]),
+                Line::from(vec![
+                    Span::styled("📈 Peak Block: ", Style::default().fg(Color::White)),
+                    Span::styled(
+                        if let Some(ref peak) = report.peak_block {
+                            format!(
+                                "${:.4} ({} {})",
+                                peak.usage.total_cost, peak.date, peak.time_range
+                            )
+                        } else {
+                            "No peak block yet".to_string()
+                        },
+                        Style::default().fg(Color::Magenta),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("💵 Average per Block: ", Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("${:.4}", report.average_per_block.total_cost),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                    Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("🎯 Total Cost: ", Style::default().fg(Color::White)),
+                    Span::styled(
+                        format!("${:.4}", report.total_usage.total_cost),
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]),
+                Line::from(""),
+                Line::from(vec![
+                    Span::styled("💾 Cache Status: ", Style::default().fg(Color::White)),
+                    if let Some(ref cache_status) = self.pricing_cache_status {
+                        if cache_status.exists && cache_status.valid {
+                            Span::styled(
+                                format!(
+                                    "✓ Valid (Updated: {}, {} models)",
+                                    cache_status.last_updated, cache_status.model_count
+                                ),
+                                Style::default().fg(Color::Green),
+                            )
+                        } else if cache_status.exists {
+                            Span::styled(
+                                "⚠ Expired - Update recommended",
+                                Style::default().fg(Color::Yellow),
+                            )
+                        } else {
+                            Span::styled(
+                                "✗ No cache - Using fallback pricing",
+                                Style::default().fg(Color::Red),
+                            )
+                        }
+                    } else {
+                        Span::styled(
+                            "✗ No cache - Using fallback pricing",
+                            Style::default().fg(Color::Red),
+                        )
+                    },
+                ]),
+            ];
+
+            let summary = Paragraph::new(summary_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("⏰ 5-Hour Billing Blocks Summary")
+                        .border_style(Style::default().fg(Color::Blue)),
+                )
+                .wrap(Wrap { trim: true });
+            f.render_widget(summary, chunks[0]);
+        } else {
+            let controls = Paragraph::new("Press 's' to toggle summary | Arrow keys to navigate")
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("⏰ Billing Blocks"),
+                )
+                .wrap(Wrap { trim: true });
+            f.render_widget(controls, chunks[0]);
+        }
+
+        // Billing blocks table
+        if report.blocks.is_empty() {
+            let empty_text = vec![
+                Line::from(""),
+                Line::from("No billing blocks found"),
+                Line::from(""),
+                Line::from("Billing blocks track usage in 5-hour periods:"),
+                Line::from("  00:00-05:00, 05:00-10:00, 10:00-15:00"),
+                Line::from("  15:00-20:00, 20:00-00:00 (UTC)"),
+            ];
+            let empty_paragraph = Paragraph::new(empty_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("📋 No Billing Blocks")
+                        .border_style(Style::default().fg(Color::DarkGray)),
+                )
+                .style(Style::default().fg(Color::Gray));
+            f.render_widget(empty_paragraph, chunks[1]);
+            return;
+        }
+
+        let header_cells = [
+            "Block Period",
+            "Cost",
+            "Tokens",
+            "Sessions",
+            "Avg/Session",
+            "% of Total",
+        ]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+        let header = Row::new(header_cells).height(1).bottom_margin(1);
+
+        let current_block = self.billing_manager.get_current_block();
+        let rows = report.blocks.iter().enumerate().map(|(i, block)| {
+            let is_current = i == 0 && current_block.is_some();
+            let style = if is_current {
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let cost_color = if block.usage.total_cost > 5.0 {
+                Color::Red
+            } else if block.usage.total_cost > 2.5 {
+                Color::Yellow
+            } else {
+                Color::Green
+            };
+
+            let avg_per_session = if block.session_count > 0 {
+                block.usage.total_cost / block.session_count as f64
+            } else {
+                0.0
+            };
+
+            let percentage = if report.total_usage.total_cost > 0.0 {
+                (block.usage.total_cost / report.total_usage.total_cost) * 100.0
+            } else {
+                0.0
+            };
+
+            Row::new(vec![
+                Cell::from(format!("{} - {}", &block.date, &block.time_range)).style(style),
+                Cell::from(format!("${:.4}", block.usage.total_cost))
+                    .style(Style::default().fg(cost_color)),
+                Cell::from(self.format_number(block.usage.total_tokens()))
+                    .style(Style::default().fg(Color::Magenta)),
+                Cell::from(format!("{}", block.session_count))
+                    .style(Style::default().fg(Color::Blue)),
+                Cell::from(format!("${:.4}", avg_per_session))
+                    .style(Style::default().fg(Color::Yellow)),
+                Cell::from(format!("{:.1}%", percentage)).style(Style::default().fg(Color::Cyan)),
+            ])
+            .height(1)
+        });
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(28),
+                Constraint::Length(10),
+                Constraint::Length(12),
+                Constraint::Length(10),
+                Constraint::Length(12),
+                Constraint::Length(8),
+            ],
+        )
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("📋 5-Hour Billing Blocks")
+                .border_style(Style::default().fg(Color::Blue)),
+        )
+        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .highlight_symbol("► ");
+
+        f.render_stateful_widget(table, chunks[1], &mut self.billing_blocks_table_state);
+
+        // Scrollbar
+        if report.blocks.len() > 10 {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(Some("↑"))
+                .end_symbol(Some("↓"));
+            f.render_stateful_widget(
+                scrollbar,
+                chunks[1].inner(Margin {
+                    vertical: 1,
+                    horizontal: 0,
+                }),
+                &mut self.billing_blocks_scroll_state,
+            );
+        }
+    }
+
     fn render_help_popup(&mut self, f: &mut Frame) {
         let area = f.area();
         let popup_area = Rect {
@@ -2024,7 +2383,8 @@ impl TuiApp {
             Tab::Overview => Tab::Daily,
             Tab::Daily => Tab::Sessions,
             Tab::Sessions => Tab::Charts,
-            Tab::Charts => Tab::Resume,
+            Tab::Charts => Tab::BillingBlocks,
+            Tab::BillingBlocks => Tab::Resume,
             Tab::Resume => Tab::Help,
             Tab::Help => Tab::Overview,
         };
@@ -2040,7 +2400,8 @@ impl TuiApp {
             Tab::Daily => Tab::Overview,
             Tab::Sessions => Tab::Daily,
             Tab::Charts => Tab::Sessions,
-            Tab::Resume => Tab::Charts,
+            Tab::BillingBlocks => Tab::Charts,
+            Tab::Resume => Tab::BillingBlocks,
             Tab::Help => Tab::Resume,
         };
         // Auto-load removed to prevent hanging
@@ -2077,6 +2438,21 @@ impl TuiApp {
                 };
                 self.session_table_state.select(Some(i));
                 self.session_scroll_state = self.session_scroll_state.position(i);
+            }
+            Tab::BillingBlocks => {
+                let report = self.billing_manager.generate_report();
+                let i = match self.billing_blocks_table_state.selected() {
+                    Some(i) => {
+                        if i >= report.blocks.len().saturating_sub(1) {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.billing_blocks_table_state.select(Some(i));
+                self.billing_blocks_scroll_state = self.billing_blocks_scroll_state.position(i);
             }
             Tab::Resume => {
                 let i = match self.resume_table_state.selected() {
@@ -2123,6 +2499,21 @@ impl TuiApp {
                 };
                 self.session_table_state.select(Some(i));
                 self.session_scroll_state = self.session_scroll_state.position(i);
+            }
+            Tab::BillingBlocks => {
+                let report = self.billing_manager.generate_report();
+                let i = match self.billing_blocks_table_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            report.blocks.len().saturating_sub(1)
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.billing_blocks_table_state.select(Some(i));
+                self.billing_blocks_scroll_state = self.billing_blocks_scroll_state.position(i);
             }
             Tab::Resume => {
                 let i = match self.resume_table_state.selected() {
@@ -2223,31 +2614,58 @@ impl TuiApp {
     }
 
     fn handle_enter(&mut self) {
-        // Copy session info to clipboard if in Sessions tab
-        if self.current_tab == Tab::Sessions {
-            if let Some(selected) = self.session_table_state.selected() {
-                if let Some(session) = self.session_report.sessions.get(selected) {
-                    let info = format!(
-                        "Project: {}, Session: {}, Cost: ${:.4}, Tokens: {}",
-                        session.project_path,
-                        session.session_id,
-                        session.total_cost,
-                        session.total_tokens
-                    );
-
-                    if let Ok(mut ctx) = ClipboardContext::new() {
-                        if ctx.set_contents(info.clone()).is_ok() {
-                            self.status_message =
-                                Some("📋 Copied session info to clipboard".to_string());
+        // Handle enter key based on current tab
+        match self.current_tab {
+            Tab::Resume => {
+                // Open Claude session in browser
+                if let Some(selected) = self.resume_table_state.selected() {
+                    if let Some(resume_session) = self.resume_sessions.get(selected) {
+                        if let Some(session_data) = &resume_session.session_data {
+                            let parser = ClaudeSessionParser::new(None);
+                            match parser.open_session(session_data) {
+                                Ok(_) => {
+                                    self.status_message =
+                                        Some("🚀 Opening session in browser...".to_string());
+                                }
+                                Err(e) => {
+                                    self.status_message =
+                                        Some(format!("❌ Failed to open session: {}", e));
+                                }
+                            }
                         } else {
                             self.status_message =
-                                Some("❌ Failed to copy to clipboard".to_string());
+                                Some("ℹ️ This is a demo session (no real data)".to_string());
                         }
-                    } else {
-                        self.status_message = Some("❌ Clipboard not available".to_string());
                     }
                 }
             }
+            Tab::Sessions => {
+                // Copy session info to clipboard
+                if let Some(selected) = self.session_table_state.selected() {
+                    if let Some(session) = self.session_report.sessions.get(selected) {
+                        let info = format!(
+                            "Project: {}, Session: {}, Cost: ${:.4}, Tokens: {}",
+                            session.project_path,
+                            session.session_id,
+                            session.total_cost,
+                            session.total_tokens
+                        );
+
+                        if let Ok(mut ctx) = ClipboardContext::new() {
+                            if ctx.set_contents(info.clone()).is_ok() {
+                                self.status_message =
+                                    Some("📋 Copied session info to clipboard".to_string());
+                            } else {
+                                self.status_message =
+                                    Some("❌ Failed to copy to clipboard".to_string());
+                            }
+                        } else {
+                            self.status_message = Some("❌ Clipboard not available".to_string());
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 

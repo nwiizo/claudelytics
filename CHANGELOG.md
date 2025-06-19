@@ -5,6 +5,132 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-06-19
+
+### 🚀 Major Feature Release: Billing Blocks & Offline Support
+
+This release introduces Claude's 5-hour billing block tracking and offline pricing cache, bringing key features from ccusage to claudelytics with enhanced visualization in the TUI.
+
+### ✨ Added
+
+#### 5-Hour Billing Blocks
+- **Accurate Billing Alignment**: Track usage in Claude's actual billing periods (UTC):
+  - 00:00-05:00, 05:00-10:00, 10:00-15:00, 15:00-20:00, 20:00-00:00
+- **New `billing-blocks` Command**: Comprehensive billing block analysis
+  - Peak usage identification and time pattern analysis
+  - Average cost per block and session count tracking
+  - JSON output support for scripting and automation
+- **Thread-Safe Implementation**: Parallel processing with `Arc<Mutex<>>` for accurate aggregation
+- **Smart Aggregation**: Automatic usage grouping by billing periods across multiple days
+
+#### Offline Pricing Cache
+- **7-Day Cache**: Store pricing data locally for offline operation
+- **New `pricing-cache` Command**: Manage pricing cache
+  - `--show`: Display cache status and validity
+  - `--clear`: Remove cached pricing data
+  - `--update`: Placeholder for future API integration
+- **Smart Fallback**: Automatic fallback to built-in pricing when cache is unavailable
+- **Version Awareness**: Cache invalidates on app version change for compatibility
+
+#### Enhanced TUI
+- **New Billing Tab**: Dedicated visualization for billing blocks (6th tab)
+  - Real-time current block cost tracking
+  - Peak block identification with timestamps
+  - Average cost per block display
+  - Percentage breakdown by billing block
+  - Pricing cache status indicator
+- **Interactive Features**: 
+  - Press 's' in Billing tab to toggle summary view
+  - Color coding based on cost thresholds (green < $2.5, yellow < $5, red > $5)
+  - Scrollbar support for long billing block lists
+- **Navigation Update**: Tab count increased from 5 to 6 tabs
+
+### 🔧 Improved
+
+#### Performance
+- **Parallel Parsing**: Enhanced thread-safe data collection during file parsing
+- **Memory Efficiency**: Optimized billing block storage with date-based HashMap
+- **Fast Lookups**: O(1) current block retrieval with efficient data structures
+
+#### Code Quality
+- **Module Organization**: Clean separation of billing and pricing concerns
+- **Type Safety**: Comprehensive use of Rust's type system for reliability
+- **Error Handling**: Robust error handling with context-aware messages
+- **Documentation**: Extensive inline documentation for new modules
+
+### 🔄 Changed
+
+#### Parser Integration
+- **Dual Collection**: Parser now collects both daily/session data and billing blocks
+- **Backward Compatible**: Existing functionality unchanged, billing blocks are additive
+- **API Updates**: `parse_all()` now returns `(DailyUsageMap, SessionUsageMap, BillingBlockManager)`
+
+#### Display Enhancements
+- **Billing Block Format**: New display format for billing block reports
+- **Time Labels**: Human-readable time ranges (e.g., "00:00-05:00 UTC")
+- **Cost Formatting**: Consistent 4-decimal precision across all displays
+
+### 🐛 Fixed
+
+- **Clippy Warnings**: Resolved all clippy lints and warnings
+- **Dead Code**: Properly attributed unused code for future API expansion
+- **Import Organization**: Cleaned up and optimized module imports
+- **Type Mismatches**: Fixed all type compatibility issues in new modules
+
+### 📊 Technical Details
+
+#### Data Structures
+```rust
+pub struct BillingBlock {
+    pub start_time: DateTime<Utc>,
+    pub end_time: DateTime<Utc>,
+    pub usage: TokenUsage,
+    pub session_count: usize,
+}
+
+pub struct PricingCache {
+    pub pricing_data: HashMap<String, ModelPricing>,
+    pub last_updated: DateTime<Utc>,
+    pub version: String,
+}
+```
+
+#### Key Algorithms
+- **Block Normalization**: Timestamps normalized to 5-hour boundaries
+- **Usage Aggregation**: Thread-safe accumulation across parallel processing
+- **Cache Location**: Platform-appropriate using `dirs` crate (~/.cache/claudelytics/)
+
+### 💡 Usage Examples
+
+```bash
+# View billing blocks with summary
+claudelytics billing-blocks
+
+# Get billing data as JSON
+claudelytics billing-blocks --json
+
+# Filter billing blocks by date
+claudelytics billing-blocks --since 20240601
+
+# Check pricing cache status
+claudelytics pricing-cache
+
+# Clear pricing cache
+claudelytics pricing-cache --clear
+
+# Navigate to Billing tab in TUI
+claudelytics tui  # Then press '5' or Tab to reach Billing tab
+```
+
+### 🚀 Migration Notes
+
+This release is fully backward compatible. No changes required for existing workflows:
+- All existing commands work unchanged
+- New features are additive and optional
+- Configuration files remain compatible
+
+---
+
 ## [0.3.1] - 2025-06-12
 
 ### 🔧 Cost Calculation Alignment with ccusage
@@ -249,6 +375,7 @@ This release establishes the foundation for:
 - CSV export capabilities
 - Real-time monitoring with watch mode
 
+[0.4.0]: https://github.com/nwiizo/claudelytics/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/nwiizo/claudelytics/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nwiizo/claudelytics/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nwiizo/claudelytics/compare/v0.1.0...v0.2.0
