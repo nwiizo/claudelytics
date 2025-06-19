@@ -43,6 +43,7 @@ enum AppMode {
     Normal,
     CommandPalette,
     Search,
+    ResumeInput,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -102,6 +103,10 @@ pub struct TuiApp {
     resume_sessions: Vec<ResumeSession>,
     resume_table_state: TableState,
     resume_loading: bool,
+    // Resume input buffer
+    resume_input_mode: bool,
+    resume_input_buffer: String,
+    resume_input_cursor: usize,
     // Billing blocks
     billing_manager: BillingBlockManager,
     billing_blocks_table_state: TableState,
@@ -178,6 +183,9 @@ impl TuiApp {
             resume_sessions: Vec::new(),
             resume_table_state: TableState::default(),
             resume_loading: false,
+            resume_input_mode: false,
+            resume_input_buffer: String::new(),
+            resume_input_cursor: 0,
             billing_manager,
             billing_blocks_table_state: TableState::default(),
             billing_blocks_scroll_state,
@@ -497,6 +505,9 @@ impl TuiApp {
                                     AppMode::Search => {
                                         self.handle_search_input(key.code)?;
                                     }
+                                    AppMode::ResumeInput => {
+                                        self.handle_resume_input(key.code)?;
+                                    }
                                     AppMode::Normal => {
                                         if self.search_mode {
                                             self.handle_search_input(key.code)?;
@@ -572,6 +583,15 @@ impl TuiApp {
             }
             KeyCode::Char('r') => {
                 self.refresh_data()?;
+            }
+            KeyCode::Char('i') => {
+                if self.current_tab == Tab::Resume {
+                    self.resume_input_mode = true;
+                    self.current_mode = AppMode::ResumeInput;
+                    self.resume_input_buffer.clear();
+                    self.resume_input_cursor = 0;
+                    self.status_message = Some("💬 Enter message (Enter to send, Esc to cancel)".to_string());
+                }
             }
             KeyCode::Char('s') => {
                 if self.current_tab == Tab::BillingBlocks {
