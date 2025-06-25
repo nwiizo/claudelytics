@@ -6,7 +6,7 @@ use colored::*;
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 // use std::io::{self, Write};
 
-pub fn display_daily_report_enhanced(report: &DailyReport, force_compact: bool) {
+pub fn display_daily_report_enhanced(report: &DailyReport, _force_compact: bool) {
     // Header with timestamp and separator
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
     println!("{}", Terminal::separator('═').bright_black());
@@ -49,7 +49,7 @@ pub fn display_daily_report_enhanced(report: &DailyReport, force_compact: bool) 
             daily: report.daily.iter().take(30).cloned().collect(),
             totals: report.totals.clone(),
         };
-        display_daily_table_compact(&limited_report, force_compact);
+        display_daily_table_complete(&limited_report);
     } else if !report.daily.is_empty() {
         println!("{}", Terminal::separator('─').bright_black());
         println!("{}", "📋 Daily Usage Details".bright_green().bold());
@@ -613,6 +613,7 @@ fn display_daily_cards(daily: &[crate::models::DailyUsage]) {
     }
 }
 
+#[allow(dead_code)]
 fn display_daily_table_compact(report: &DailyReport, force_compact: bool) {
     let mut table = Table::new();
     table
@@ -688,6 +689,71 @@ fn display_daily_table_compact(report: &DailyReport, force_compact: bool) {
             row.push(Cell::new(format!("{:.0} tok/$", tokens_per_dollar)).fg(Color::Green));
             row.push(Cell::new(format!("{:.1}%", cache_efficiency)).fg(Color::Magenta));
         }
+
+        table.add_row(row);
+    }
+
+    println!("{}", table);
+}
+
+fn display_daily_table_complete(report: &DailyReport) {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS);
+
+    // Always show all columns for the Complete Daily Breakdown
+    let headers = vec![
+        Cell::new("Date").fg(Color::Cyan),
+        Cell::new("Cost").fg(Color::Cyan),
+        Cell::new("Tokens").fg(Color::Cyan),
+        Cell::new("Input").fg(Color::Cyan),
+        Cell::new("Output").fg(Color::Cyan),
+        Cell::new("O/I Ratio").fg(Color::Cyan),
+        Cell::new("Efficiency").fg(Color::Cyan),
+        Cell::new("Cache Hit").fg(Color::Cyan),
+    ];
+
+    table.set_header(headers);
+
+    // Reverse the order to show newest dates at the bottom
+    let reversed_daily: Vec<_> = report.daily.iter().rev().collect();
+    let last_index = reversed_daily.len().saturating_sub(1);
+
+    for (i, daily) in reversed_daily.iter().enumerate() {
+        let date_color = if i == last_index {
+            Color::Green
+        } else {
+            Color::White
+        };
+        let ratio = if daily.input_tokens > 0 {
+            daily.output_tokens as f64 / daily.input_tokens as f64
+        } else {
+            0.0
+        };
+        let tokens_per_dollar = if daily.total_cost > 0.0 {
+            daily.total_tokens as f64 / daily.total_cost
+        } else {
+            0.0
+        };
+        let cache_efficiency = if (daily.input_tokens + daily.cache_creation_tokens) > 0 {
+            daily.cache_read_tokens as f64
+                / (daily.input_tokens + daily.cache_creation_tokens) as f64
+                * 100.0
+        } else {
+            0.0
+        };
+
+        let row = vec![
+            Cell::new(&daily.date).fg(date_color),
+            Cell::new(format!("{:>10}", format_currency(daily.total_cost))).fg(Color::Green),
+            Cell::new(format_number(daily.total_tokens)).fg(Color::Magenta),
+            Cell::new(format_number(daily.input_tokens)).fg(Color::Blue),
+            Cell::new(format_number(daily.output_tokens)).fg(Color::Cyan),
+            Cell::new(format!("{:.1}:1", ratio)).fg(Color::Yellow),
+            Cell::new(format!("{:.0} tok/$", tokens_per_dollar)).fg(Color::Green),
+            Cell::new(format!("{:.1}%", cache_efficiency)).fg(Color::Magenta),
+        ];
 
         table.add_row(row);
     }

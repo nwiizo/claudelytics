@@ -69,10 +69,7 @@ impl SessionBlockManager {
         );
 
         let is_active = self.is_block_active(block_start, block_end);
-        let blocks = self
-            .blocks
-            .entry(block_key.clone())
-            .or_insert_with(Vec::new);
+        let blocks = self.blocks.entry(block_key.clone()).or_default();
 
         if let Some(block) = blocks.iter_mut().find(|b| b.start_time == block_start) {
             block.usage.add(usage);

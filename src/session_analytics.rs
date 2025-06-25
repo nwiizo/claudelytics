@@ -22,7 +22,6 @@ pub struct TimeOfDayAnalysis {
 pub struct HourlyMetrics {
     pub usage: TokenUsage,
     pub session_count: usize,
-    pub avg_session_duration: f64,
 }
 
 /// Day of week analysis
@@ -39,6 +38,7 @@ pub struct DayOfWeekAnalysis {
 pub struct SessionDurationAnalysis {
     pub avg_session_duration: Duration,
     pub longest_session: SessionInfo,
+    #[allow(dead_code)]
     pub shortest_session: SessionInfo,
     pub duration_distribution: DurationDistribution,
 }
@@ -76,13 +76,16 @@ pub struct SessionFrequencyAnalysis {
 pub struct CostEfficiencyAnalysis {
     pub most_expensive_session: SessionInfo,
     pub most_efficient_session: SessionInfo,
+    #[allow(dead_code)]
     pub least_efficient_session: SessionInfo,
     pub sessions_above_threshold: Vec<SessionInfo>,
+    #[allow(dead_code)]
     pub cost_threshold: f64,
 }
 
 /// Model switching analysis
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ModelSwitchingAnalysis {
     pub switch_count: usize,
     pub avg_sessions_before_switch: f64,
@@ -101,14 +104,14 @@ impl<'a> SessionAnalytics<'a> {
         let mut after_hours = TokenUsage::default();
 
         // Group sessions by hour
-        for (_path, (usage, timestamp)) in self.sessions {
+        for (usage, timestamp) in self.sessions.values() {
             let hour = timestamp.hour();
             let metrics = hourly_usage.entry(hour).or_default();
             metrics.usage.add(usage);
             metrics.session_count += 1;
 
             // Business hours: 9 AM - 6 PM
-            if hour >= 9 && hour < 18 {
+            if (9..18).contains(&hour) {
                 business_hours.add(usage);
             } else {
                 after_hours.add(usage);
@@ -143,7 +146,7 @@ impl<'a> SessionAnalytics<'a> {
         let mut weekend_usage = TokenUsage::default();
         let mut weekday_usage = TokenUsage::default();
 
-        for (_path, (usage, timestamp)) in self.sessions {
+        for (usage, timestamp) in self.sessions.values() {
             let weekday = timestamp.date_naive().weekday();
             daily_usage.entry(weekday).or_default().add(usage);
 
@@ -288,7 +291,7 @@ impl<'a> SessionAnalytics<'a> {
         let mut all_dates: Vec<chrono::NaiveDate> = Vec::new();
 
         // Count sessions per day
-        for (_path, (_usage, timestamp)) in self.sessions {
+        for (_usage, timestamp) in self.sessions.values() {
             let date = timestamp.date_naive();
             *daily_sessions.entry(date).or_insert(0) += 1;
             all_dates.push(date);

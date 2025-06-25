@@ -307,6 +307,7 @@ pub struct TokenProjection {
 
 impl ProjectionCalculator {
     /// Calculate token-based projections
+    #[allow(dead_code)]
     pub fn calculate_token_projections(&self, daily_usage: &DailyUsageMap) -> TokenProjection {
         let today = Utc::now().date_naive();
         let start_date = today - Duration::days(self.history_days);

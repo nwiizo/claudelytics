@@ -500,18 +500,26 @@ impl TuiApp {
                     match evt {
                         Event::Key(key) => {
                             if key.kind == KeyEventKind::Press {
-                                match self.current_mode {
-                                    AppMode::CommandPalette => {
-                                        self.handle_command_palette_input(key.code, key.modifiers)?;
-                                    }
-                                    AppMode::Search => {
-                                        self.handle_search_input(key.code)?;
-                                    }
-                                    AppMode::Normal => {
-                                        if self.search_mode {
+                                // Check if we're in resume input mode first
+                                if self.resume_input_mode {
+                                    self.handle_resume_input(key.code)?;
+                                } else {
+                                    match self.current_mode {
+                                        AppMode::CommandPalette => {
+                                            self.handle_command_palette_input(
+                                                key.code,
+                                                key.modifiers,
+                                            )?;
+                                        }
+                                        AppMode::Search => {
                                             self.handle_search_input(key.code)?;
-                                        } else {
-                                            self.handle_normal_input(key.code, key.modifiers)?;
+                                        }
+                                        AppMode::Normal => {
+                                            if self.search_mode {
+                                                self.handle_search_input(key.code)?;
+                                            } else {
+                                                self.handle_normal_input(key.code, key.modifiers)?;
+                                            }
                                         }
                                     }
                                 }
@@ -615,6 +623,15 @@ impl TuiApp {
             }
             KeyCode::Char('?') => {
                 self.show_help_popup = !self.show_help_popup;
+            }
+            KeyCode::Char('i') => {
+                if self.current_tab == Tab::Resume {
+                    self.resume_input_mode = true;
+                    self.status_message = Some(
+                        "📝 Input mode: Type message and press Enter to send, Esc to cancel"
+                            .to_string(),
+                    );
+                }
             }
             KeyCode::Enter => {
                 if self.current_tab == Tab::Resume {
@@ -867,6 +884,7 @@ impl TuiApp {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn handle_resume_input(&mut self, key: KeyCode) -> Result<()> {
         match key {
             KeyCode::Esc => {
@@ -917,6 +935,7 @@ impl TuiApp {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn send_resume_message(&mut self) -> Result<()> {
         if let Some(selected) = self.resume_table_state.selected() {
             if let Some(resume_session) = self.resume_sessions.get(selected) {

@@ -23,6 +23,7 @@ pub struct BurnRateMetrics {
     /// Trend direction (positive = increasing, negative = decreasing)
     pub trend_percentage: f64,
     /// Hours until projected budget limit (if set)
+    #[allow(dead_code)]
     pub hours_until_budget_limit: Option<f64>,
 }
 
@@ -145,6 +146,7 @@ impl BurnRateCalculator {
     }
 
     /// Get real-time burn rate for current session
+    #[allow(dead_code)]
     pub fn get_session_burn_rate(
         &self,
         session_start: DateTime<Utc>,
@@ -183,6 +185,7 @@ impl BurnRateCalculator {
 }
 
 /// Format burn rate metrics for display
+#[allow(dead_code)]
 pub fn format_burn_rate(metrics: &BurnRateMetrics) -> String {
     let trend_arrow = if metrics.trend_percentage > 0.0 {
         "↑"
@@ -207,6 +210,7 @@ pub fn format_burn_rate(metrics: &BurnRateMetrics) -> String {
 }
 
 /// Format number with commas
+#[allow(dead_code)]
 fn format_number(num: u64) -> String {
     let num_str = num.to_string();
     let chars: Vec<char> = num_str.chars().collect();

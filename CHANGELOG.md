@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2025-06-25
+
+### ✨ Added
+- **Complete Daily Breakdown**: Now displays all columns (Date, Cost, Tokens, Input, Output, O/I Ratio, Efficiency, Cache Hit) in the daily breakdown when there are more than 3 days of data
+
+### 🔧 Improved
+- **Code Quality**: Fixed all clippy warnings and errors for cleaner codebase
+- **Performance**: Refactored code to use more efficient patterns (e.g., `.values()` iterator, `or_default()`)
+- **Code Organization**: Restructured handle_blocks_command to use options struct for better maintainability
+
+### 🐛 Fixed
+- Removed redundant imports and unused code
+- Fixed iterator patterns to be more idiomatic
+- Fixed unnecessary cloning and borrowing operations
+- Fixed manual range contains to use built-in methods
+
 ## [0.4.1] - 2025-06-25
 
 ### ✨ Added

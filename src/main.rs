@@ -52,7 +52,6 @@ use reports::{
     SortField as ReportSortField, SortOrder as ReportSortOrder, generate_daily_report_sorted,
     generate_monthly_report_sorted, generate_session_report_sorted,
 };
-use serde_json;
 use session_blocks::{SessionBlockConfig, SessionBlockManager};
 use state::{TuiMode, TuiSessionState};
 use std::path::{Path, PathBuf};
@@ -892,15 +891,17 @@ fn run() -> Result<()> {
         } => {
             handle_blocks_command(
                 &claude_dir,
-                active,
-                length,
-                recent,
-                live,
-                refresh,
-                token_limit,
-                cost_limit,
-                since_date.clone(),
-                until_date.clone(),
+                BlocksCommandOptions {
+                    active,
+                    length,
+                    recent,
+                    live,
+                    refresh,
+                    token_limit,
+                    cost_limit,
+                    since: since_date.clone(),
+                    until: until_date.clone(),
+                },
             )?;
         }
         Commands::Projections {
@@ -1570,9 +1571,8 @@ fn handle_pricing_cache_command(show: bool, clear: bool, update: bool) -> Result
     Ok(())
 }
 
-/// Handle session blocks command
-fn handle_blocks_command(
-    claude_dir: &Path,
+/// Session blocks command options
+struct BlocksCommandOptions {
     active: bool,
     length: i64,
     recent: bool,
@@ -1582,24 +1582,27 @@ fn handle_blocks_command(
     cost_limit: Option<f64>,
     since: Option<String>,
     until: Option<String>,
-) -> Result<()> {
+}
+
+/// Handle session blocks command
+fn handle_blocks_command(claude_dir: &Path, options: BlocksCommandOptions) -> Result<()> {
     use colored::Colorize;
     use std::thread;
     use std::time::Duration;
 
     // Create session block configuration
     let config = SessionBlockConfig {
-        block_hours: length,
-        token_limit,
-        cost_limit,
+        block_hours: options.length,
+        token_limit: options.token_limit,
+        cost_limit: options.cost_limit,
     };
 
     loop {
         // Parse usage data
         let parser = UsageParser::new(
             claude_dir.to_path_buf(),
-            since.clone(),
-            until.clone(),
+            options.since.clone(),
+            options.until.clone(),
             None, // No model filter for session blocks
         )?;
         let (_daily_map, session_map, _billing_manager) = parser.parse_all()?;
@@ -1610,33 +1613,33 @@ fn handle_blocks_command(
         // Add all usage records to blocks
         // We need to iterate through the session map to get timestamps
         for (session_path, (usage, last_activity)) in &session_map {
-            block_manager.add_usage(last_activity.clone(), &usage, session_path);
+            block_manager.add_usage(*last_activity, usage, session_path);
         }
 
         // Generate report
         let report = block_manager.generate_report();
 
         // Clear screen for live mode
-        if live {
+        if options.live {
             print!("\x1B[2J\x1B[1;1H");
         }
 
         // Display header
         println!("\n{}", "📊 Session Blocks Analysis".bold().cyan());
         println!("{}", "═".repeat(50).blue());
-        println!("Block Duration: {} hours", length);
-        if let Some(limit) = token_limit {
+        println!("Block Duration: {} hours", options.length);
+        if let Some(limit) = options.token_limit {
             println!("Token Limit: {}", format_number(limit));
         }
-        if let Some(limit) = cost_limit {
+        if let Some(limit) = options.cost_limit {
             println!("Cost Limit: ${:.2}", limit);
         }
         println!();
 
         // Filter blocks based on flags
-        let blocks_to_show: Vec<_> = if active {
+        let blocks_to_show: Vec<_> = if options.active {
             report.blocks.iter().filter(|b| b.is_active).collect()
-        } else if recent {
+        } else if options.recent {
             let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
             report
                 .blocks
@@ -1722,12 +1725,12 @@ fn handle_blocks_command(
             println!("Total Cost: ${:.4}", report.total_usage.total_cost);
         }
 
-        if !live {
+        if !options.live {
             break;
         }
 
         // Wait before refresh
-        thread::sleep(Duration::from_secs(refresh));
+        thread::sleep(Duration::from_secs(options.refresh));
     }
 
     Ok(())
