@@ -132,36 +132,36 @@ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
         },
     );
 
-    // Claude 3.5 Sonnet
+    // Claude 3.5 Sonnet - Official pricing: $3.00/$15.00 per million tokens
     pricing.insert(
         "claude-3-5-sonnet-20241022".to_string(),
         ModelPricing {
-            input_cost_per_token: Some(0.003 / 1000.0),
-            output_cost_per_token: Some(0.015 / 1000.0),
-            cache_creation_input_token_cost: Some(0.00375 / 1000.0),
-            cache_read_input_token_cost: Some(0.0003 / 1000.0),
+            input_cost_per_token: Some(3.0 / 1_000_000.0),
+            output_cost_per_token: Some(15.0 / 1_000_000.0),
+            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0), // 25% markup for cache creation
+            cache_read_input_token_cost: Some(0.3 / 1_000_000.0), // 90% discount for cache reads
         },
     );
 
-    // Claude 3.5 Haiku
+    // Claude 3.5 Haiku - Official pricing: $0.80/$4.00 per million tokens
     pricing.insert(
         "claude-3-5-haiku-20241022".to_string(),
         ModelPricing {
-            input_cost_per_token: Some(0.0008 / 1000.0),
-            output_cost_per_token: Some(0.004 / 1000.0),
-            cache_creation_input_token_cost: Some(0.001 / 1000.0),
-            cache_read_input_token_cost: Some(0.00008 / 1000.0),
+            input_cost_per_token: Some(0.8 / 1_000_000.0),
+            output_cost_per_token: Some(4.0 / 1_000_000.0),
+            cache_creation_input_token_cost: Some(1.0 / 1_000_000.0), // 25% markup for cache creation
+            cache_read_input_token_cost: Some(0.08 / 1_000_000.0), // 90% discount for cache reads
         },
     );
 
-    // Claude 3 Opus
+    // Claude 3 Opus - Official pricing: $15.00/$75.00 per million tokens
     pricing.insert(
         "claude-3-opus-20240229".to_string(),
         ModelPricing {
-            input_cost_per_token: Some(0.015 / 1000.0),
-            output_cost_per_token: Some(0.075 / 1000.0),
-            cache_creation_input_token_cost: Some(0.01875 / 1000.0),
-            cache_read_input_token_cost: Some(0.0015 / 1000.0),
+            input_cost_per_token: Some(15.0 / 1_000_000.0),
+            output_cost_per_token: Some(75.0 / 1_000_000.0),
+            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0), // 25% markup for cache creation
+            cache_read_input_token_cost: Some(1.5 / 1_000_000.0), // 90% discount for cache reads
         },
     );
 
