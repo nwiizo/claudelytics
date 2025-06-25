@@ -867,6 +867,91 @@ impl TuiApp {
         Ok(())
     }
 
+    fn handle_resume_input(&mut self, key: KeyCode) -> Result<()> {
+        match key {
+            KeyCode::Esc => {
+                self.resume_input_mode = false;
+                self.current_mode = AppMode::Normal;
+                self.resume_input_buffer.clear();
+                self.resume_input_cursor = 0;
+                self.status_message = None;
+            }
+            KeyCode::Enter => {
+                if !self.resume_input_buffer.is_empty() {
+                    self.send_resume_message()?;
+                }
+                self.resume_input_mode = false;
+                self.current_mode = AppMode::Normal;
+                self.resume_input_buffer.clear();
+                self.resume_input_cursor = 0;
+            }
+            KeyCode::Backspace => {
+                if self.resume_input_cursor > 0 {
+                    self.resume_input_buffer
+                        .remove(self.resume_input_cursor - 1);
+                    self.resume_input_cursor -= 1;
+                }
+            }
+            KeyCode::Left => {
+                if self.resume_input_cursor > 0 {
+                    self.resume_input_cursor -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if self.resume_input_cursor < self.resume_input_buffer.len() {
+                    self.resume_input_cursor += 1;
+                }
+            }
+            KeyCode::Home => {
+                self.resume_input_cursor = 0;
+            }
+            KeyCode::End => {
+                self.resume_input_cursor = self.resume_input_buffer.len();
+            }
+            KeyCode::Char(c) => {
+                self.resume_input_buffer.insert(self.resume_input_cursor, c);
+                self.resume_input_cursor += 1;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn send_resume_message(&mut self) -> Result<()> {
+        if let Some(selected) = self.resume_table_state.selected() {
+            if let Some(resume_session) = self.resume_sessions.get(selected) {
+                if let Some(session_data) = &resume_session.session_data {
+                    // In a real implementation, this would:
+                    // 1. Parse the session file
+                    // 2. Add the new user message
+                    // 3. Potentially send to Claude API
+                    // 4. Update the session file
+                    // For now, we'll just show a status message
+                    self.status_message = Some(format!(
+                        "📤 Message sent to session: '{}'\nMessage: {}",
+                        if session_data.summary.is_empty() {
+                            "Untitled"
+                        } else {
+                            &session_data.summary
+                        },
+                        self.resume_input_buffer
+                    ));
+
+                    // TODO: Implement actual message sending logic here
+                    // This would involve:
+                    // - Loading the full conversation from the session file
+                    // - Adding the user's message
+                    // - Optionally calling Claude API for a response
+                    // - Saving the updated conversation back to the file
+                } else {
+                    self.status_message =
+                        Some("❌ Cannot send message to demo session".to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn filter_commands(&mut self) {
         if self.command_palette_query.is_empty() {
             self.filtered_commands = self.available_commands.clone();
@@ -1972,14 +2057,26 @@ impl TuiApp {
     }
 
     fn render_resume(&mut self, f: &mut Frame, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Controls info
-                Constraint::Min(0),    // Claude sessions table
-            ])
-            .margin(1)
-            .split(area);
+        let chunks = if self.resume_input_mode {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Controls info
+                    Constraint::Min(10),   // Claude sessions table
+                    Constraint::Length(3), // Input area
+                ])
+                .margin(1)
+                .split(area)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Controls info
+                    Constraint::Min(0),    // Claude sessions table
+                ])
+                .margin(1)
+                .split(area)
+        };
 
         // Controls and instructions
         let controls_text = Line::from(vec![
@@ -1998,6 +2095,13 @@ impl TuiApp {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" Open Session | ", Style::default().fg(Color::White)),
+            Span::styled(
+                "i",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" Send Message | ", Style::default().fg(Color::White)),
             Span::styled(
                 "r",
                 Style::default()
@@ -2086,6 +2190,34 @@ impl TuiApp {
             .highlight_symbol("► ");
 
             f.render_stateful_widget(table, chunks[1], &mut self.resume_table_state);
+        }
+
+        // Render input area if in input mode
+        if self.resume_input_mode && chunks.len() > 2 {
+            let input_block = Block::default()
+                .borders(Borders::ALL)
+                .title("💬 Message Input")
+                .border_style(Style::default().fg(Color::Yellow));
+
+            let input_text = if self.resume_input_buffer.is_empty() {
+                Paragraph::new("Type your message here...")
+                    .style(Style::default().fg(Color::DarkGray))
+                    .block(input_block)
+            } else {
+                // Create the input display with cursor
+                let mut display_text = self.resume_input_buffer.clone();
+                if self.resume_input_cursor == display_text.len() {
+                    display_text.push('_'); // Show cursor at end
+                } else {
+                    display_text.insert(self.resume_input_cursor, '|'); // Show cursor in middle
+                }
+
+                Paragraph::new(display_text)
+                    .style(Style::default().fg(Color::White))
+                    .block(input_block)
+            };
+
+            f.render_widget(input_text, chunks[2]);
         }
     }
 

@@ -5,6 +5,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-06-25
+
+### ✨ Added
+
+#### Advanced Session Analytics
+- **New `analytics` Command**: Comprehensive session analysis inspired by ccusage
+  - Time of day usage patterns with peak/off-peak hours
+  - Day of week analysis with weekend vs weekday ratios
+  - Session duration tracking and distribution
+  - Usage frequency and streak analysis
+  - Cost efficiency metrics with threshold alerts
+- **Flexible Analysis Options**: Use flags to show specific analyses
+  - `--time-of-day`: Hourly usage patterns
+  - `--day-of-week`: Weekly patterns
+  - `--duration`: Session length analysis
+  - `--frequency`: Usage streaks and frequency
+  - `--efficiency`: Cost per token analysis
+
+#### Burn Rate Calculation
+- **Real-time Burn Rate**: Track token consumption rates
+  - 24-hour and 7-day burn rate calculations
+  - Hourly, daily, and monthly projections
+  - Trend analysis with percentage changes
+- **Integrated Display**: Burn rate section in daily reports
+  - Visual trend indicators (up/down arrows)
+  - Color-coded projections based on trends
+
+#### Terminal-Aware Display
+- **Responsive Output**: Automatic terminal width detection
+  - Smart column hiding for narrow terminals
+  - Compact mode with `--compact` flag
+  - Display modes: Compact/Normal/Wide
+- **Better Formatting**: Improved table layouts and truncation
+
+### 🔧 Improved
+
+- **Daily Report**: Limited to last 30 days for cleaner output
+- **Date Ordering**: Newest dates now appear at bottom of tables
+- **Performance**: Optimized analytics calculations for large datasets
+
+### 🐛 Fixed
+
+- **Test Stability**: Fixed projection test that was failing due to date ordering
+- **Import Organization**: Cleaned up unused imports across modules
+
 ## [0.4.0] - 2025-06-19
 
 ### 🚀 Major Feature Release: Billing Blocks & Offline Support

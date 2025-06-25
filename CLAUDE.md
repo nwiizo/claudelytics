@@ -103,6 +103,14 @@ CLAUDELYTICS_DISPLAY_FORMAT=table cargo run -- --by-model  # Alternative table f
 
 # MCP server mode
 cargo run -- mcp-server              # Start MCP server for IDE integration
+
+# Advanced analytics
+cargo run -- analytics               # Show all session analytics
+cargo run -- analytics --time-of-day # Time of day usage patterns
+cargo run -- analytics --day-of-week # Day of week patterns
+cargo run -- analytics --duration    # Session duration analysis
+cargo run -- analytics --frequency   # Session frequency and streaks
+cargo run -- analytics --efficiency  # Cost efficiency analysis
 ```
 
 ## Pre-commit Requirements
@@ -128,6 +136,7 @@ alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
 alias cresume='claudelytics --resume'
+alias canalytics='claudelytics analytics'
 # alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
@@ -162,6 +171,7 @@ alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
 alias cresume='claudelytics --resume'
+alias canalytics='claudelytics analytics'
 # alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
@@ -196,6 +206,7 @@ alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
 alias cresume='claudelytics --resume'
+alias canalytics='claudelytics analytics'
 # alias canatui='claudelytics analytics-tui'  # Analytics Studio (planned)
 
 # Function to quickly check cost for a specific date
@@ -403,6 +414,9 @@ The tool expects Claude Code JSONL records with this structure:
 - **Session Comparison**: Mark sessions for comparison with 'x' key  
 - **Efficiency Sorting**: Sort sessions by efficiency (tokens per dollar)
 - **Resume Tab**: View recent sessions, bookmarks, and session history
+  - **Interactive Message Input**: Press 'i' to enter input mode and send messages to sessions
+  - **Input Buffer**: Full text editing with cursor movement (Left/Right/Home/End)
+  - **Message Sending**: Type your message and press Enter to send (Esc to cancel)
 - **Billing Tab**: 5-hour billing blocks with summary, peak usage, and pricing cache status
 - **Keyboard Navigation**: vim-style (j/k) and arrow key navigation
 - **Visual Elements**: Cost gauges, colored tables, ASCII charts, and formatted cards

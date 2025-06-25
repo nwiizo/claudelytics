@@ -5,6 +5,7 @@
 
 // Module declarations
 mod billing_blocks;
+mod burn_rate;
 mod claude_sessions;
 mod config;
 mod config_v2;
@@ -22,8 +23,12 @@ mod pricing;
 mod pricing_cache;
 mod pricing_strategies;
 mod processing;
+mod projections;
 mod reports;
+mod session_analytics;
+mod session_blocks;
 mod state;
+mod terminal;
 mod tui;
 mod watcher;
 
@@ -40,11 +45,15 @@ use display::{
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
 use interactive::InteractiveSelector;
+use models::SessionUsageMap;
 use parser::UsageParser;
+use projections::ProjectionCalculator;
 use reports::{
     SortField as ReportSortField, SortOrder as ReportSortOrder, generate_daily_report_sorted,
     generate_monthly_report_sorted, generate_session_report_sorted,
 };
+use serde_json;
+use session_blocks::{SessionBlockConfig, SessionBlockManager};
 use state::{TuiMode, TuiSessionState};
 use std::path::{Path, PathBuf};
 use tui::TuiApp;
@@ -77,7 +86,7 @@ pub enum SortField {
 #[command(
     about = "Claude Code usage analytics tool - Analyze token usage, costs, and session patterns"
 )]
-#[command(version = "0.3.0")]
+#[command(version = "0.4.1")]
 #[command(
     long_about = "Claudelytics analyzes Claude Code usage patterns and costs by parsing JSONL files from ~/.claude/projects/.
 
@@ -151,6 +160,13 @@ struct Cli {
         long_help = "Use classic table format instead of enhanced cards\nPrimary interface: Traditional ASCII tables\nDefault: Enhanced format with visual cards and summaries"
     )]
     classic: bool,
+
+    #[arg(
+        long,
+        help = "Force compact display mode",
+        long_help = "Force compact display mode for narrow terminals\nReduces columns shown in tables to fit smaller screens\nAutomatic: Adapts based on terminal width\nWith --compact: Always use minimal columns"
+    )]
+    compact: bool,
 
     #[arg(
         long,
@@ -421,6 +437,130 @@ enum Commands {
         )]
         update: bool,
     },
+    #[command(about = "Show session blocks (configurable time windows)")]
+    #[command(
+        long_about = "Analyze usage in configurable session blocks\n\nSession blocks provide flexible time-based analysis similar to billing blocks\nbut with customizable durations. Default is 8-hour blocks.\n\nFEATURES:\n  - Configurable block duration (default: 8 hours)\n  - Active session tracking with burn rate\n  - Usage projections based on current activity\n  - Time to limit calculations\n\nEXAMPLES:\n  claudelytics blocks                  # Show all session blocks\n  claudelytics blocks --active         # Show only active sessions\n  claudelytics blocks --length 4       # Use 4-hour blocks\n  claudelytics blocks --recent         # Show last 30 days\n  claudelytics blocks --live           # Live monitoring mode"
+    )]
+    Blocks {
+        #[arg(
+            long,
+            help = "Show only active session blocks",
+            long_help = "Display only blocks with current activity"
+        )]
+        active: bool,
+        #[arg(
+            long,
+            help = "Session block length in hours",
+            long_help = "Duration of each session block (default: 8 hours)",
+            default_value = "8"
+        )]
+        length: i64,
+        #[arg(
+            long,
+            help = "Show recent blocks (last 30 days)",
+            long_help = "Display only blocks from the last 30 days"
+        )]
+        recent: bool,
+        #[arg(
+            long,
+            help = "Live monitoring mode",
+            long_help = "Continuously monitor and update session blocks"
+        )]
+        live: bool,
+        #[arg(
+            long,
+            help = "Refresh interval in seconds (for live mode)",
+            long_help = "How often to refresh data in live mode (default: 5 seconds)",
+            default_value = "5"
+        )]
+        refresh: u64,
+        #[arg(
+            long,
+            help = "Token limit for warnings",
+            long_help = "Set token limit for burn rate warnings"
+        )]
+        token_limit: Option<u64>,
+        #[arg(
+            long,
+            help = "Cost limit for warnings",
+            long_help = "Set cost limit (USD) for burn rate warnings"
+        )]
+        cost_limit: Option<f64>,
+    },
+    #[command(about = "Show usage projections and forecasts")]
+    #[command(
+        long_about = "Project future usage based on historical patterns\n\nProjections analyze your usage history to forecast future token consumption\nand costs. Includes trend analysis, growth rates, and limit predictions.\n\nFEATURES:\n  - Daily, weekly, and monthly averages\n  - Trend detection (increasing/decreasing/stable)\n  - Confidence intervals for projections\n  - Time to limit calculations\n  - Cost estimates for future periods\n\nEXAMPLES:\n  claudelytics projections             # Show 30-day projection\n  claudelytics projections --days 90   # Project 90 days ahead\n  claudelytics projections --json      # JSON output for scripts"
+    )]
+    Projections {
+        #[arg(
+            long,
+            help = "Number of days to project",
+            long_help = "How many days into the future to project (default: 30)",
+            default_value = "30"
+        )]
+        days: i64,
+        #[arg(
+            long,
+            help = "Token limit for projections",
+            long_help = "Set token limit to calculate when it will be reached"
+        )]
+        token_limit: Option<u64>,
+        #[arg(
+            long,
+            help = "Cost limit for projections",
+            long_help = "Set cost limit (USD) to calculate when it will be reached"
+        )]
+        cost_limit: Option<f64>,
+        #[arg(
+            long,
+            help = "JSON output",
+            long_help = "Output projections in JSON format"
+        )]
+        json: bool,
+    },
+    #[command(about = "Advanced session analytics")]
+    #[command(
+        long_about = "Analyze session patterns and behaviors in depth\n\nProvides detailed insights into:\n  - Time of day usage patterns\n  - Day of week trends\n  - Session duration analysis\n  - Usage frequency and streaks\n  - Cost efficiency metrics\n\nEXAMPLES:\n  claudelytics analytics              # Show all analytics\n  claudelytics analytics --time-of-day # Time patterns only\n  claudelytics analytics --efficiency  # Cost efficiency analysis"
+    )]
+    Analytics {
+        #[arg(
+            long,
+            help = "Show time of day analysis",
+            long_help = "Analyze usage patterns by hour of day"
+        )]
+        time_of_day: bool,
+        #[arg(
+            long,
+            help = "Show day of week analysis",
+            long_help = "Analyze usage patterns by day of week"
+        )]
+        day_of_week: bool,
+        #[arg(
+            long,
+            help = "Show session duration analysis",
+            long_help = "Analyze session lengths and patterns"
+        )]
+        duration: bool,
+        #[arg(
+            long,
+            help = "Show frequency analysis",
+            long_help = "Analyze session frequency and streaks"
+        )]
+        frequency: bool,
+        #[arg(
+            long,
+            help = "Show cost efficiency analysis",
+            long_help = "Analyze cost efficiency of sessions"
+        )]
+        efficiency: bool,
+        #[arg(
+            long,
+            help = "Cost threshold for efficiency analysis",
+            long_help = "Sessions above this cost will be highlighted",
+            default_value = "1.0"
+        )]
+        threshold: f64,
+    },
 }
 
 /// Application entry point
@@ -508,8 +648,8 @@ fn run() -> Result<()> {
     // Create parser
     let parser = UsageParser::new(
         claude_dir.clone(),
-        since_date,
-        until_date,
+        since_date.clone(),
+        until_date.clone(),
         cli.model_filter.clone(),
     )?;
 
@@ -644,7 +784,7 @@ fn run() -> Result<()> {
             } else if cli.classic || classic {
                 display_daily_report_table(&daily_report);
             } else {
-                display_daily_report_enhanced(&daily_report);
+                display_daily_report_enhanced(&daily_report, cli.compact);
             }
         }
         Commands::Session {
@@ -740,6 +880,61 @@ fn run() -> Result<()> {
             update,
         } => {
             handle_pricing_cache_command(show, clear, update)?;
+        }
+        Commands::Blocks {
+            active,
+            length,
+            recent,
+            live,
+            refresh,
+            token_limit,
+            cost_limit,
+        } => {
+            handle_blocks_command(
+                &claude_dir,
+                active,
+                length,
+                recent,
+                live,
+                refresh,
+                token_limit,
+                cost_limit,
+                since_date.clone(),
+                until_date.clone(),
+            )?;
+        }
+        Commands::Projections {
+            days,
+            token_limit,
+            cost_limit,
+            json,
+        } => {
+            handle_projections_command(
+                &claude_dir,
+                days,
+                token_limit,
+                cost_limit,
+                json,
+                since_date.clone(),
+            )?;
+        }
+        Commands::Analytics {
+            time_of_day,
+            day_of_week,
+            duration,
+            frequency,
+            efficiency,
+            threshold,
+        } => {
+            handle_analytics_command(
+                &session_map_clone,
+                time_of_day,
+                day_of_week,
+                duration,
+                frequency,
+                efficiency,
+                threshold,
+            )?;
         }
         _ => {} // Other commands handled above
     }
@@ -1373,4 +1568,531 @@ fn handle_pricing_cache_command(show: bool, clear: bool, update: bool) -> Result
     }
 
     Ok(())
+}
+
+/// Handle session blocks command
+fn handle_blocks_command(
+    claude_dir: &Path,
+    active: bool,
+    length: i64,
+    recent: bool,
+    live: bool,
+    refresh: u64,
+    token_limit: Option<u64>,
+    cost_limit: Option<f64>,
+    since: Option<String>,
+    until: Option<String>,
+) -> Result<()> {
+    use colored::Colorize;
+    use std::thread;
+    use std::time::Duration;
+
+    // Create session block configuration
+    let config = SessionBlockConfig {
+        block_hours: length,
+        token_limit,
+        cost_limit,
+    };
+
+    loop {
+        // Parse usage data
+        let parser = UsageParser::new(
+            claude_dir.to_path_buf(),
+            since.clone(),
+            until.clone(),
+            None, // No model filter for session blocks
+        )?;
+        let (_daily_map, session_map, _billing_manager) = parser.parse_all()?;
+
+        // Create session block manager
+        let mut block_manager = SessionBlockManager::new(config.clone());
+
+        // Add all usage records to blocks
+        // We need to iterate through the session map to get timestamps
+        for (session_path, (usage, last_activity)) in &session_map {
+            block_manager.add_usage(last_activity.clone(), &usage, session_path);
+        }
+
+        // Generate report
+        let report = block_manager.generate_report();
+
+        // Clear screen for live mode
+        if live {
+            print!("\x1B[2J\x1B[1;1H");
+        }
+
+        // Display header
+        println!("\n{}", "📊 Session Blocks Analysis".bold().cyan());
+        println!("{}", "═".repeat(50).blue());
+        println!("Block Duration: {} hours", length);
+        if let Some(limit) = token_limit {
+            println!("Token Limit: {}", format_number(limit));
+        }
+        if let Some(limit) = cost_limit {
+            println!("Cost Limit: ${:.2}", limit);
+        }
+        println!();
+
+        // Filter blocks based on flags
+        let blocks_to_show: Vec<_> = if active {
+            report.blocks.iter().filter(|b| b.is_active).collect()
+        } else if recent {
+            let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+            report
+                .blocks
+                .iter()
+                .filter(|b| b.start_time > cutoff)
+                .collect()
+        } else {
+            report.blocks.iter().collect()
+        };
+
+        if blocks_to_show.is_empty() {
+            print_warning("No session blocks found matching criteria");
+        } else {
+            // Sort blocks by start time (newest first)
+            let mut sorted_blocks = blocks_to_show;
+            sorted_blocks.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+
+            // Display blocks
+            for block in sorted_blocks {
+                let is_active_indicator = if block.is_active { "🟢" } else { "⚪" };
+                let time_range = format!(
+                    "{} - {}",
+                    block.start_time.format("%Y-%m-%d %H:%M"),
+                    block.end_time.format("%H:%M")
+                );
+
+                println!(
+                    "{} {} │ {} tokens │ ${:.4} │ {} sessions",
+                    is_active_indicator,
+                    time_range.cyan(),
+                    format!("{:>8}", block.usage.total_tokens()).white(),
+                    block.usage.total_cost,
+                    block.session_count
+                );
+
+                // Show burn rate for active blocks
+                if let Some(ref burn_rate) = block.burn_rate {
+                    println!(
+                        "   ├─ Burn Rate: {} tokens/hr, ${:.2}/hr",
+                        burn_rate.tokens_per_hour as u64, burn_rate.cost_per_hour
+                    );
+                    println!(
+                        "   ├─ Projected Daily: {} tokens, ${:.2}",
+                        format_number(burn_rate.projected_daily_tokens),
+                        burn_rate.projected_daily_cost
+                    );
+
+                    if let Some(time_to_limit) = burn_rate.time_to_limit {
+                        let hours = time_to_limit.num_hours();
+                        let minutes = time_to_limit.num_minutes() % 60;
+                        println!("   └─ Time to Limit: {}h {}m", hours, minutes);
+                    }
+                }
+            }
+
+            // Show summary
+            if let Some(ref current_burn) = report.current_burn_rate {
+                println!("\n{}", "🔥 Current Burn Rate".bold().yellow());
+                println!("{}", "─".repeat(40));
+                println!(
+                    "Hourly: {} tokens, ${:.2}",
+                    current_burn.tokens_per_hour as u64, current_burn.cost_per_hour
+                );
+                println!(
+                    "Daily Projection: {} tokens, ${:.2}",
+                    format_number(current_burn.projected_daily_tokens),
+                    current_burn.projected_daily_cost
+                );
+                println!(
+                    "Monthly Projection: ${:.2}",
+                    current_burn.projected_monthly_cost
+                );
+            }
+
+            println!("\n{}", "📈 Summary".bold().cyan());
+            println!("{}", "─".repeat(40));
+            println!("Total Blocks: {}", report.total_blocks);
+            println!("Active Blocks: {}", report.active_blocks);
+            println!(
+                "Total Tokens: {}",
+                format_number(report.total_usage.total_tokens())
+            );
+            println!("Total Cost: ${:.4}", report.total_usage.total_cost);
+        }
+
+        if !live {
+            break;
+        }
+
+        // Wait before refresh
+        thread::sleep(Duration::from_secs(refresh));
+    }
+
+    Ok(())
+}
+
+/// Handle projections command
+fn handle_projections_command(
+    claude_dir: &Path,
+    days: i64,
+    token_limit: Option<u64>,
+    cost_limit: Option<f64>,
+    json: bool,
+    since: Option<String>,
+) -> Result<()> {
+    use colored::Colorize;
+
+    // Parse usage data
+    let parser = UsageParser::new(
+        claude_dir.to_path_buf(),
+        since,
+        None,
+        None, // No model filter for projections
+    )?;
+    let (daily_usage, _, _) = parser.parse_all()?;
+
+    // Calculate projections
+    let calculator = ProjectionCalculator::new()
+        .with_projection_days(days)
+        .with_limits(token_limit, cost_limit);
+
+    let projection = calculator.calculate_projections(&daily_usage);
+
+    if json {
+        // Output as JSON
+        println!("{}", serde_json::to_string_pretty(&projection)?);
+    } else {
+        // Display formatted output
+        println!("\n{}", "📊 Usage Projections".bold().cyan());
+        println!("{}", "═".repeat(50).blue());
+
+        // Current averages
+        println!("\n{}", "📈 Current Usage Patterns".bold());
+        println!("{}", "─".repeat(40));
+        println!("Daily Average: ${:.2}", projection.daily_average);
+        println!("Weekly Average: ${:.2}", projection.weekly_average);
+        println!("Monthly Average: ${:.2}", projection.monthly_average);
+
+        // Trend analysis
+        let trend_emoji = match projection.trend {
+            projections::TrendDirection::Increasing => "📈",
+            projections::TrendDirection::Decreasing => "📉",
+            projections::TrendDirection::Stable => "➡️",
+        };
+        let _trend_color = match projection.trend {
+            projections::TrendDirection::Increasing => "red",
+            projections::TrendDirection::Decreasing => "green",
+            projections::TrendDirection::Stable => "yellow",
+        };
+
+        println!(
+            "\nTrend: {} {:?} ({:+.1}%)",
+            trend_emoji, projection.trend, projection.growth_rate
+        );
+
+        // Projections
+        println!("\n{}", "🔮 Future Projections".bold());
+        println!("{}", "─".repeat(40));
+        println!(
+            "Estimated Monthly Cost: ${:.2}",
+            projection.estimated_monthly_cost
+        );
+
+        if let Some(days_until) = projection.days_until_limit {
+            if let Some(limit_date) = projection.limit_date {
+                let warning = if days_until <= 7 { "⚠️ " } else { "" };
+                println!(
+                    "{}Days Until Limit: {} ({})",
+                    warning,
+                    days_until,
+                    limit_date.format("%Y-%m-%d")
+                );
+            }
+        }
+
+        // Show projection details for key dates
+        if !projection.projections.is_empty() {
+            println!("\n{}", "📅 Projection Details".bold());
+            println!("{}", "─".repeat(40));
+
+            // Show projections for 7, 14, 30 days
+            for days_ahead in &[7, 14, 30] {
+                if let Some(proj) = projection.projections.get((*days_ahead - 1) as usize) {
+                    println!(
+                        "{} days: ${:.2} (${:.2} - ${:.2})",
+                        days_ahead, proj.value, proj.lower_bound, proj.upper_bound
+                    );
+                }
+            }
+        }
+
+        // Recommendations
+        println!("\n{}", "💡 Recommendations".bold());
+        println!("{}", "─".repeat(40));
+
+        match projection.trend {
+            projections::TrendDirection::Increasing => {
+                if projection.growth_rate > 20.0 {
+                    println!("⚠️  Usage is growing rapidly. Consider:");
+                    println!("   - Review recent sessions for efficiency");
+                    println!("   - Set up usage alerts");
+                    println!("   - Implement cost controls");
+                } else {
+                    println!("📈 Usage is increasing moderately");
+                    println!("   - Monitor for sustained growth");
+                    println!("   - Consider setting budget limits");
+                }
+            }
+            projections::TrendDirection::Decreasing => {
+                println!("✅ Usage is decreasing");
+                println!("   - Good cost management");
+                println!("   - Continue current practices");
+            }
+            projections::TrendDirection::Stable => {
+                println!("➡️  Usage is stable");
+                println!("   - Predictable costs");
+                println!("   - Budget planning is straightforward");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle analytics command
+fn handle_analytics_command(
+    session_map: &SessionUsageMap,
+    time_of_day: bool,
+    day_of_week: bool,
+    duration: bool,
+    frequency: bool,
+    efficiency: bool,
+    threshold: f64,
+) -> Result<()> {
+    use colored::Colorize;
+    use session_analytics::SessionAnalytics;
+
+    let analytics = SessionAnalytics::new(session_map);
+
+    // Show all analytics if no specific flags are set
+    let show_all = !time_of_day && !day_of_week && !duration && !frequency && !efficiency;
+
+    println!("\n{}", "🔍 Advanced Session Analytics".bold().cyan());
+    println!("{}", "═".repeat(50).blue());
+
+    // Time of day analysis
+    if show_all || time_of_day {
+        let time_analysis = analytics.analyze_time_of_day();
+
+        println!("\n{}", "⏰ Time of Day Analysis".bold());
+        println!("{}", "─".repeat(40));
+        println!(
+            "Peak Hour: {} ({}:00 - {}:00)",
+            time_analysis.peak_hour,
+            time_analysis.peak_hour,
+            (time_analysis.peak_hour + 1) % 24
+        );
+        println!(
+            "Off-Peak Hour: {} ({}:00 - {}:00)",
+            time_analysis.off_peak_hour,
+            time_analysis.off_peak_hour,
+            (time_analysis.off_peak_hour + 1) % 24
+        );
+
+        let business_tokens = time_analysis.business_hours_usage.total_tokens();
+        let after_hours_tokens = time_analysis.after_hours_usage.total_tokens();
+        let business_pct = if business_tokens + after_hours_tokens > 0 {
+            (business_tokens as f64 / (business_tokens + after_hours_tokens) as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        println!("\nBusiness Hours (9AM-6PM):");
+        println!(
+            "  Tokens: {} ({:.1}%)",
+            format_number(business_tokens),
+            business_pct
+        );
+        println!(
+            "  Cost: ${:.4}",
+            time_analysis.business_hours_usage.total_cost
+        );
+
+        println!("\nAfter Hours:");
+        println!(
+            "  Tokens: {} ({:.1}%)",
+            format_number(after_hours_tokens),
+            100.0 - business_pct
+        );
+        println!("  Cost: ${:.4}", time_analysis.after_hours_usage.total_cost);
+
+        // Show hourly distribution
+        println!("\nHourly Distribution:");
+        for hour in 0..24 {
+            if let Some(metrics) = time_analysis.hourly_usage.get(&hour) {
+                let bar_length =
+                    (metrics.usage.total_tokens() as f64 / 100000.0).min(40.0) as usize;
+                let bar = "█".repeat(bar_length);
+                println!(
+                    "  {:02}:00 │ {} {} sessions",
+                    hour,
+                    bar.green(),
+                    metrics.session_count
+                );
+            }
+        }
+    }
+
+    // Day of week analysis
+    if show_all || day_of_week {
+        let dow_analysis = analytics.analyze_day_of_week();
+
+        println!("\n{}", "📅 Day of Week Analysis".bold());
+        println!("{}", "─".repeat(40));
+        println!("Most Active Day: {:?}", dow_analysis.most_active_day);
+        println!("Least Active Day: {:?}", dow_analysis.least_active_day);
+        println!(
+            "Weekend/Weekday Ratio: {:.2}",
+            dow_analysis.weekend_vs_weekday_ratio
+        );
+
+        println!("\nUsage by Day:");
+        use chrono::Weekday;
+        for day in &[
+            Weekday::Mon,
+            Weekday::Tue,
+            Weekday::Wed,
+            Weekday::Thu,
+            Weekday::Fri,
+            Weekday::Sat,
+            Weekday::Sun,
+        ] {
+            if let Some(usage) = dow_analysis.daily_usage.get(day) {
+                println!(
+                    "  {:?}: {} tokens, ${:.4}",
+                    day,
+                    format_number(usage.total_tokens()),
+                    usage.total_cost
+                );
+            }
+        }
+    }
+
+    // Session duration analysis
+    if show_all || duration {
+        let duration_analysis = analytics.analyze_session_durations();
+
+        println!("\n{}", "⏱️ Session Duration Analysis".bold());
+        println!("{}", "─".repeat(40));
+        println!(
+            "Average Duration: {}",
+            session_analytics::format_duration(&duration_analysis.avg_session_duration)
+        );
+
+        println!("\nLongest Session:");
+        println!("  Path: {}", duration_analysis.longest_session.path);
+        println!(
+            "  Duration: {}",
+            session_analytics::format_duration(&duration_analysis.longest_session.duration)
+        );
+        println!(
+            "  Tokens: {}",
+            format_number(duration_analysis.longest_session.tokens)
+        );
+
+        println!("\nDuration Distribution:");
+        let dist = &duration_analysis.duration_distribution;
+        println!("  < 5 min: {} sessions", dist.under_5_min);
+        println!("  5-30 min: {} sessions", dist.min_5_to_30);
+        println!("  30-60 min: {} sessions", dist.min_30_to_60);
+        println!("  1-3 hours: {} sessions", dist.hour_1_to_3);
+        println!("  > 3 hours: {} sessions", dist.over_3_hours);
+    }
+
+    // Session frequency analysis
+    if show_all || frequency {
+        let freq_analysis = analytics.analyze_session_frequency();
+
+        println!("\n{}", "📊 Session Frequency Analysis".bold());
+        println!("{}", "─".repeat(40));
+        println!("Sessions per Day: {:.2}", freq_analysis.sessions_per_day);
+        println!("Sessions per Week: {:.2}", freq_analysis.sessions_per_week);
+        println!("Days with Usage: {}", freq_analysis.days_with_usage);
+        println!(
+            "Average Sessions per Active Day: {:.2}",
+            freq_analysis.avg_sessions_per_active_day
+        );
+
+        println!("\nStreaks:");
+        println!("  Longest Streak: {} days", freq_analysis.longest_streak);
+        let current_color = if freq_analysis.current_streak > 0 {
+            "green"
+        } else {
+            "red"
+        };
+        println!(
+            "  Current Streak: {} days",
+            freq_analysis
+                .current_streak
+                .to_string()
+                .color(current_color)
+        );
+    }
+
+    // Cost efficiency analysis
+    if show_all || efficiency {
+        let eff_analysis = analytics.analyze_cost_efficiency(threshold);
+
+        println!("\n{}", "💰 Cost Efficiency Analysis".bold());
+        println!("{}", "─".repeat(40));
+
+        println!("\nMost Expensive Session:");
+        println!("  Path: {}", eff_analysis.most_expensive_session.path);
+        println!("  Cost: ${:.4}", eff_analysis.most_expensive_session.cost);
+        println!(
+            "  Tokens: {}",
+            format_number(eff_analysis.most_expensive_session.tokens)
+        );
+
+        println!("\nMost Efficient Session:");
+        println!("  Path: {}", eff_analysis.most_efficient_session.path);
+        let eff = if eff_analysis.most_efficient_session.cost > 0.0 {
+            eff_analysis.most_efficient_session.tokens as f64
+                / eff_analysis.most_efficient_session.cost
+        } else {
+            0.0
+        };
+        println!("  Efficiency: {:.0} tokens/$", eff);
+
+        if !eff_analysis.sessions_above_threshold.is_empty() {
+            println!("\n⚠️  Sessions Above ${} Threshold:", threshold);
+            for session in &eff_analysis.sessions_above_threshold {
+                println!("  - {} (${:.4})", session.path, session.cost);
+            }
+        }
+    }
+
+    println!("\n{}", "═".repeat(50).blue());
+
+    Ok(())
+}
+
+/// Format large numbers with commas
+fn format_number(num: u64) -> String {
+    let s = num.to_string();
+    let mut result = String::new();
+    let mut count = 0;
+
+    for ch in s.chars().rev() {
+        if count == 3 {
+            result.push(',');
+            count = 0;
+        }
+        result.push(ch);
+        count += 1;
+    }
+
+    result.chars().rev().collect()
 }

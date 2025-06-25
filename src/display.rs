@@ -1,24 +1,32 @@
+use crate::burn_rate::BurnRateCalculator;
 use crate::models::{DailyReport, MonthlyReport, SessionReport};
+use crate::terminal::{DisplayMode, Terminal};
 use chrono::Local;
 use colored::*;
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 // use std::io::{self, Write};
 
-pub fn display_daily_report_enhanced(report: &DailyReport) {
+pub fn display_daily_report_enhanced(report: &DailyReport, force_compact: bool) {
     // Header with timestamp and separator
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
     println!(
         "{}  {}",
         "📊 Claude Code Usage Analytics".bright_blue().bold(),
         format!("Generated {}", timestamp).dimmed()
     );
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
     println!();
 
     // Quick summary card with insights
     display_enhanced_summary_card(&report.totals, report.daily.len());
     println!();
+
+    // Display burn rate metrics
+    if !report.daily.is_empty() {
+        display_burn_rate_metrics(&report.daily);
+        println!();
+    }
 
     // Recent activity with better visual separation
     if !report.daily.is_empty() {
@@ -28,32 +36,42 @@ pub fn display_daily_report_enhanced(report: &DailyReport) {
 
     // Detailed breakdown with visual separation
     if report.daily.len() > 3 {
-        println!("{}", "─".repeat(80).bright_black());
-        println!("{}", "📋 Complete Daily Breakdown".bright_green().bold());
-        println!("{}", "─".repeat(80).bright_black());
-        display_daily_table_compact(report);
+        println!("{}", Terminal::separator('─').bright_black());
+        println!(
+            "{}",
+            "📋 Complete Daily Breakdown (Last 30 Days)"
+                .bright_green()
+                .bold()
+        );
+        println!("{}", Terminal::separator('─').bright_black());
+        // Create a modified report with only the last 30 days
+        let limited_report = DailyReport {
+            daily: report.daily.iter().take(30).cloned().collect(),
+            totals: report.totals.clone(),
+        };
+        display_daily_table_compact(&limited_report, force_compact);
     } else if !report.daily.is_empty() {
-        println!("{}", "─".repeat(80).bright_black());
+        println!("{}", Terminal::separator('─').bright_black());
         println!("{}", "📋 Daily Usage Details".bright_green().bold());
-        println!("{}", "─".repeat(80).bright_black());
+        println!("{}", Terminal::separator('─').bright_black());
         display_daily_cards(&report.daily);
     }
 
     // Footer
     println!();
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
 }
 
 pub fn display_session_report_enhanced(report: &SessionReport) {
     // Header with timestamp and separator
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
     println!(
         "{}  {}",
         "📊 Claude Code Session Analytics".bright_blue().bold(),
         format!("Generated {}", timestamp).dimmed()
     );
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
     println!();
 
     // Enhanced session summary
@@ -66,15 +84,15 @@ pub fn display_session_report_enhanced(report: &SessionReport) {
 
     // Detailed table for many sessions with visual separation
     if report.sessions.len() > 5 {
-        println!("{}", "─".repeat(80).bright_black());
+        println!("{}", Terminal::separator('─').bright_black());
         println!("{}", "📋 Complete Session List".bright_green().bold());
-        println!("{}", "─".repeat(80).bright_black());
+        println!("{}", Terminal::separator('─').bright_black());
         display_session_table_compact(report);
     }
 
     // Footer
     println!();
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
 }
 
 fn display_enhanced_summary_card(totals: &crate::models::TokenUsageTotals, days_count: usize) {
@@ -338,6 +356,80 @@ fn display_enhanced_session_summary(
     println!("└{}┘", "─".repeat(box_width - 2));
 }
 
+fn display_burn_rate_metrics(daily: &[crate::models::DailyUsage]) {
+    use crate::models::TokenUsage;
+    use chrono::NaiveDate;
+    use std::collections::HashMap;
+
+    // Convert daily usage to DailyUsageMap for burn rate calculator
+    let mut daily_map: HashMap<NaiveDate, TokenUsage> = HashMap::new();
+    for day in daily {
+        let usage = TokenUsage {
+            input_tokens: day.input_tokens,
+            output_tokens: day.output_tokens,
+            cache_creation_tokens: day.cache_creation_tokens,
+            cache_read_tokens: day.cache_read_tokens,
+            total_cost: day.total_cost,
+        };
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
+            daily_map.insert(date, usage);
+        }
+    }
+
+    let calculator = BurnRateCalculator::new(daily_map);
+
+    // Calculate burn rate for different time periods
+    let burn_rate_24h = calculator.calculate_burn_rate(24);
+    let burn_rate_7d = calculator.calculate_burn_rate(24 * 7);
+
+    println!("{}", "🔥 BURN RATE ANALYSIS".bright_red().bold());
+    println!("{}", Terminal::separator('─').bright_black());
+
+    if let Some(metrics_24h) = burn_rate_24h {
+        let trend_arrow = if metrics_24h.trend_percentage > 0.0 {
+            "↑".bright_red()
+        } else if metrics_24h.trend_percentage < 0.0 {
+            "↓".bright_green()
+        } else {
+            "→".bright_yellow()
+        };
+
+        println!(
+            "24h Rate: {} tokens/hr (${:.4}/hr) {} {:.1}%",
+            format_number(metrics_24h.tokens_per_hour as u64).bright_cyan(),
+            metrics_24h.cost_per_hour,
+            trend_arrow,
+            metrics_24h.trend_percentage.abs()
+        );
+
+        println!(
+            "Projected Today: {} tokens (${:.2})",
+            format_number(metrics_24h.projected_daily_tokens).bright_magenta(),
+            metrics_24h.projected_daily_cost
+        );
+    }
+
+    if let Some(metrics_7d) = burn_rate_7d {
+        println!();
+        println!(
+            "7-Day Average: {} tokens/hr (${:.4}/hr)",
+            format_number(metrics_7d.tokens_per_hour as u64).bright_cyan(),
+            metrics_7d.cost_per_hour
+        );
+
+        println!(
+            "Monthly Projection: {} ({} tokens)",
+            format!("${:.2}", metrics_7d.projected_monthly_cost)
+                .bright_red()
+                .bold(),
+            format_number(metrics_7d.projected_monthly_cost as u64 * 1000000 / 150)
+                .bright_magenta()
+        );
+    }
+
+    println!("{}", Terminal::separator('─').bright_black());
+}
+
 fn display_enhanced_recent_activity(daily: &[crate::models::DailyUsage]) {
     println!("{}", "📈 RECENT ACTIVITY TREND".bright_cyan().bold());
     println!();
@@ -388,7 +480,7 @@ fn display_enhanced_recent_activity(daily: &[crate::models::DailyUsage]) {
 
     if daily.len() >= 2 {
         println!();
-        println!("{}", "─".repeat(80).bright_black());
+        println!("{}", Terminal::separator('─').bright_black());
         let avg_cost = total_cost_week / (daily.len().min(7) as f64);
         let avg_tokens = total_tokens_week / (daily.len().min(7) as u64);
         println!(
@@ -521,24 +613,47 @@ fn display_daily_cards(daily: &[crate::models::DailyUsage]) {
     }
 }
 
-fn display_daily_table_compact(report: &DailyReport) {
+fn display_daily_table_compact(report: &DailyReport, force_compact: bool) {
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL)
-        .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_header(vec![
-            Cell::new("Date").fg(Color::Cyan),
-            Cell::new("Cost").fg(Color::Cyan),
-            Cell::new("Tokens").fg(Color::Cyan),
-            Cell::new("Input").fg(Color::Cyan),
-            Cell::new("Output").fg(Color::Cyan),
-            Cell::new("O/I Ratio").fg(Color::Cyan),
-            Cell::new("Efficiency").fg(Color::Cyan),
-            Cell::new("Cache Hit").fg(Color::Cyan),
-        ]);
+        .apply_modifier(UTF8_ROUND_CORNERS);
 
-    for (i, daily) in report.daily.iter().enumerate() {
-        let date_color = if i == 0 { Color::Green } else { Color::White };
+    // Adjust columns based on terminal width or force compact
+    let display_mode = if force_compact {
+        DisplayMode::Compact
+    } else {
+        DisplayMode::detect()
+    };
+    let mut headers = vec![
+        Cell::new("Date").fg(Color::Cyan),
+        Cell::new("Cost").fg(Color::Cyan),
+        Cell::new("Tokens").fg(Color::Cyan),
+    ];
+
+    if display_mode != DisplayMode::Compact {
+        headers.push(Cell::new("Input").fg(Color::Cyan));
+        headers.push(Cell::new("Output").fg(Color::Cyan));
+        headers.push(Cell::new("O/I Ratio").fg(Color::Cyan));
+    }
+
+    if display_mode.should_show_efficiency() {
+        headers.push(Cell::new("Efficiency").fg(Color::Cyan));
+        headers.push(Cell::new("Cache Hit").fg(Color::Cyan));
+    }
+
+    table.set_header(headers);
+
+    // Reverse the order to show newest dates at the bottom
+    let reversed_daily: Vec<_> = report.daily.iter().rev().collect();
+    let last_index = reversed_daily.len().saturating_sub(1);
+
+    for (i, daily) in reversed_daily.iter().enumerate() {
+        let date_color = if i == last_index {
+            Color::Green
+        } else {
+            Color::White
+        };
         let ratio = if daily.input_tokens > 0 {
             daily.output_tokens as f64 / daily.input_tokens as f64
         } else {
@@ -557,16 +672,24 @@ fn display_daily_table_compact(report: &DailyReport) {
             0.0
         };
 
-        table.add_row(vec![
+        let mut row = vec![
             Cell::new(&daily.date).fg(date_color),
             Cell::new(format!("{:>10}", format_currency(daily.total_cost))).fg(Color::Green),
             Cell::new(format_number(daily.total_tokens)).fg(Color::Magenta),
-            Cell::new(format_number(daily.input_tokens)).fg(Color::Blue),
-            Cell::new(format_number(daily.output_tokens)).fg(Color::Cyan),
-            Cell::new(format!("{:.1}:1", ratio)).fg(Color::Yellow),
-            Cell::new(format!("{:.0} tok/$", tokens_per_dollar)).fg(Color::Green),
-            Cell::new(format!("{:.1}%", cache_efficiency)).fg(Color::Magenta),
-        ]);
+        ];
+
+        if display_mode != DisplayMode::Compact {
+            row.push(Cell::new(format_number(daily.input_tokens)).fg(Color::Blue));
+            row.push(Cell::new(format_number(daily.output_tokens)).fg(Color::Cyan));
+            row.push(Cell::new(format!("{:.1}:1", ratio)).fg(Color::Yellow));
+        }
+
+        if display_mode.should_show_efficiency() {
+            row.push(Cell::new(format!("{:.0} tok/$", tokens_per_dollar)).fg(Color::Green));
+            row.push(Cell::new(format!("{:.1}%", cache_efficiency)).fg(Color::Magenta));
+        }
+
+        table.add_row(row);
     }
 
     println!("{}", table);
@@ -914,13 +1037,13 @@ pub fn display_model_breakdown_report(
     let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
 
     // Header
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
     println!(
         "{}  {}",
         "📊 Claude Usage by Model Family".bright_blue().bold(),
         format!("Generated {}", timestamp).dimmed()
     );
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
     println!();
 
     // Group usage by model family
@@ -1068,7 +1191,7 @@ pub fn display_model_breakdown_report(
     }
 
     // Footer
-    println!("{}", "═".repeat(80).bright_black());
+    println!("{}", Terminal::separator('═').bright_black());
 }
 
 /// Display model breakdown as a proper aligned table
