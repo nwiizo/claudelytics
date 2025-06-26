@@ -25,10 +25,10 @@ impl FallbackPricingStrategy {
         pricing.insert(
             "claude-opus-4-20250514".to_string(),
             PricingModel {
-                input_cost_per_token: 0.015 / 1000.0,
-                output_cost_per_token: 0.075 / 1000.0,
-                cache_creation_cost_per_token: 0.01875 / 1000.0,
-                cache_read_cost_per_token: 0.0015 / 1000.0,
+                input_cost_per_token: 15.0 / 1_000_000.0,
+                output_cost_per_token: 75.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 18.75 / 1_000_000.0,
+                cache_read_cost_per_token: 1.5 / 1_000_000.0,
             },
         );
 
@@ -36,10 +36,10 @@ impl FallbackPricingStrategy {
         pricing.insert(
             "claude-sonnet-4-20250514".to_string(),
             PricingModel {
-                input_cost_per_token: 0.003 / 1000.0,
-                output_cost_per_token: 0.015 / 1000.0,
-                cache_creation_cost_per_token: 0.00375 / 1000.0,
-                cache_read_cost_per_token: 0.0003 / 1000.0,
+                input_cost_per_token: 3.0 / 1_000_000.0,
+                output_cost_per_token: 15.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 3.75 / 1_000_000.0,
+                cache_read_cost_per_token: 0.3 / 1_000_000.0,
             },
         );
 
@@ -47,10 +47,10 @@ impl FallbackPricingStrategy {
         pricing.insert(
             "claude-3-5-sonnet-20241022".to_string(),
             PricingModel {
-                input_cost_per_token: 0.003 / 1000.0,
-                output_cost_per_token: 0.015 / 1000.0,
-                cache_creation_cost_per_token: 0.00375 / 1000.0,
-                cache_read_cost_per_token: 0.0003 / 1000.0,
+                input_cost_per_token: 3.0 / 1_000_000.0,
+                output_cost_per_token: 15.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 3.75 / 1_000_000.0,
+                cache_read_cost_per_token: 0.3 / 1_000_000.0,
             },
         );
 
@@ -58,10 +58,10 @@ impl FallbackPricingStrategy {
         pricing.insert(
             "claude-3-5-haiku-20241022".to_string(),
             PricingModel {
-                input_cost_per_token: 0.0008 / 1000.0,
-                output_cost_per_token: 0.004 / 1000.0,
-                cache_creation_cost_per_token: 0.001 / 1000.0,
-                cache_read_cost_per_token: 0.00008 / 1000.0,
+                input_cost_per_token: 0.8 / 1_000_000.0,
+                output_cost_per_token: 4.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 1.0 / 1_000_000.0,
+                cache_read_cost_per_token: 0.08 / 1_000_000.0,
             },
         );
 
@@ -69,10 +69,10 @@ impl FallbackPricingStrategy {
         pricing.insert(
             "claude-3-opus-20240229".to_string(),
             PricingModel {
-                input_cost_per_token: 0.015 / 1000.0,
-                output_cost_per_token: 0.075 / 1000.0,
-                cache_creation_cost_per_token: 0.01875 / 1000.0,
-                cache_read_cost_per_token: 0.0015 / 1000.0,
+                input_cost_per_token: 15.0 / 1_000_000.0,
+                output_cost_per_token: 75.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 18.75 / 1_000_000.0,
+                cache_read_cost_per_token: 1.5 / 1_000_000.0,
             },
         );
 

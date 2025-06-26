@@ -18,8 +18,7 @@ use crate::models::{
 };
 use crate::pricing_cache::PricingCache;
 use crate::tui_visuals::{
-    AnimationStyle, EnhancedStatusBar, ProgressColorScheme, SmoothProgressBar, 
-    ToastNotification, VisualEffectsManager,
+    AnimationStyle, ProgressColorScheme, SmoothProgressBar, ToastNotification, VisualEffectsManager,
 };
 use anyhow::Result;
 use chrono::{Local, Utc};

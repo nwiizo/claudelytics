@@ -31,7 +31,7 @@ pub struct MessageData {
 }
 
 /// Token usage breakdown from API response
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
@@ -87,12 +87,12 @@ impl TokenUsage {
         }
     }
 
-    /// Calculate cache efficiency (cache hits vs total input)
+    /// Calculate cache efficiency percentage (cache hits vs cache hits + input)
     #[allow(dead_code)]
     pub fn cache_efficiency(&self) -> f64 {
-        let total_input = self.input_tokens + self.cache_creation_tokens;
-        if total_input > 0 {
-            self.cache_read_tokens as f64 / total_input as f64
+        if (self.cache_read_tokens + self.input_tokens) > 0 {
+            self.cache_read_tokens as f64 / (self.cache_read_tokens + self.input_tokens) as f64
+                * 100.0
         } else {
             0.0
         }
@@ -1141,7 +1141,7 @@ pub struct ClaudeSession {
 }
 
 /// Claude conversation message
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[allow(dead_code)]
 pub struct ClaudeMessage {
     #[serde(rename = "type")]
@@ -1156,7 +1156,7 @@ pub struct ClaudeMessage {
 }
 
 /// Message content within Claude message
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[allow(dead_code)]
 pub struct MessageContent {
     pub role: String,
@@ -1165,7 +1165,7 @@ pub struct MessageContent {
 }
 
 /// Content part of message
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[allow(dead_code)]
 pub struct ContentPart {
     #[serde(rename = "type")]

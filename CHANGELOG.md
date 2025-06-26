@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2025-06-26
+
+### 🎉 Major TUI Enhancements and Critical Bug Fixes
+
+### ✨ Added
+- **Enhanced Vim Navigation**: Complete vim-style keyboard support
+  - `gg`/`G` for jump to top/bottom
+  - `Ctrl+d`/`Ctrl+u` for half-page scrolling
+  - `v` for visual mode with multi-select
+  - `w`/`b` for word navigation in search
+  - `0`/`$` for line start/end navigation
+- **Resume Tab Completion**: Fully functional message sending to sessions
+  - Interactive input mode with character counter
+  - Real-time cursor visualization
+  - Session message history updates
+- **Export Functionality**: Export data from any tab
+  - `e`/`Ctrl+E` to open export dialog
+  - CSV and JSON format support
+  - Direct clipboard integration
+- **Visual Enhancements**: Professional UI improvements
+  - Loading animations with Unicode braille patterns
+  - Toast notifications for user feedback
+  - Smooth progress bars for cost/token visualization
+  - Enhanced status bar with real-time information
+
+### 🐛 Fixed
+- **Critical Pricing Bug**: Fixed calculation error that made costs 1000x lower than actual
+  - Corrected pricing for all Claude models (Opus 4, Sonnet 4, Haiku 3.5, etc.)
+  - Updated from incorrect division by 1000 to correct division by 1,000,000
+- **Cache Efficiency Formula**: Standardized calculation across codebase
+  - Now correctly shows percentage of input from cache
+- **Monthly Token Projection**: Fixed hardcoded calculation
+  - Now uses actual burn rate data instead of fixed pricing assumption
+- **Burn Rate Calculation**: Improved accuracy
+  - Changed from 24-hour uniform distribution to 9 active hours
+
+### 🔧 Improved
+- **TUI Architecture**: Added new visual effects module (`tui_visuals.rs`)
+- **Code Quality**: Fixed all clippy warnings and formatting issues
+- **User Experience**: Comprehensive help system and visual feedback
+
+### 📊 Impact
+- Cost calculations now show accurate values (e.g., $70 instead of $70,000 for daily usage)
+- All pricing matches official Anthropic API rates
+- More accurate projections and analytics
+
 ## [0.4.2] - 2025-06-25
 
 ### ✨ Added

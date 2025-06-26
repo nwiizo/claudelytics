@@ -30,6 +30,7 @@ mod session_blocks;
 mod state;
 mod terminal;
 mod tui;
+mod tui_visuals;
 mod watcher;
 
 // Core dependencies
