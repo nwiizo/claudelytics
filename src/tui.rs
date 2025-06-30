@@ -188,6 +188,10 @@ struct ConversationView {
     conversation: Option<Conversation>,
     /// Display formatter for conversation
     display: ConversationDisplay,
+    /// Search matches in the current conversation
+    search_matches: Vec<usize>,
+    /// Current search match index
+    current_search_match: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -2044,6 +2048,8 @@ impl TuiApp {
                     filtered_messages,
                     conversation,
                     display,
+                    search_matches: Vec::new(),
+                    current_search_match: 0,
                 });
 
                 self.current_mode = AppMode::ConversationView;
@@ -2129,6 +2135,22 @@ impl TuiApp {
                     }
                 }
             }
+            KeyCode::Char('p') | KeyCode::Char('h') => {
+                // Jump to parent message
+                self.navigate_to_parent_message();
+            }
+            KeyCode::Char('l') => {
+                // Navigate to first child message
+                self.navigate_to_first_child();
+            }
+            KeyCode::Char('n') => {
+                // Next search result
+                self.navigate_to_next_search_match();
+            }
+            KeyCode::Char('N') => {
+                // Previous search result
+                self.navigate_to_previous_search_match();
+            }
             KeyCode::Char('e') => {
                 self.open_conversation_export_dialog();
             }
@@ -2139,20 +2161,32 @@ impl TuiApp {
 
     fn filter_conversation_messages(&mut self) {
         if let Some(ref mut conv) = self.selected_conversation {
+            // Clear search matches
+            conv.search_matches.clear();
+            conv.current_search_match = 0;
+            
             conv.filtered_messages = conv
                 .messages
                 .iter()
-                .filter(|msg| {
+                .enumerate()
+                .filter_map(|(idx, msg)| {
                     // Filter by search query
                     let matches_search = if self.conversation_search_query.is_empty() {
                         true
                     } else {
                         let query = self.conversation_search_query.to_lowercase();
-                        msg.message.content.iter().any(|part| {
+                        let has_match = msg.message.content.iter().any(|part| {
                             part.text
                                 .as_ref()
                                 .is_some_and(|text| text.to_lowercase().contains(&query))
-                        })
+                        });
+                        
+                        // Track search matches
+                        if has_match {
+                            conv.search_matches.push(idx);
+                        }
+                        
+                        has_match
                     };
 
                     // Filter thinking blocks and tool usage
@@ -2166,11 +2200,15 @@ impl TuiApp {
                         part.content_type == "tool_use" || part.content_type == "tool_result"
                     });
 
-                    matches_search
+                    if matches_search
                         && (self.show_thinking_blocks || !is_thinking)
                         && (self.show_tool_usage || !is_tool)
+                    {
+                        Some(msg.clone())
+                    } else {
+                        None
+                    }
                 })
-                .cloned()
                 .collect();
 
             // Reset selection if needed
@@ -2193,13 +2231,23 @@ impl TuiApp {
             KeyCode::Enter => {
                 self.conversation_search_mode = false;
                 self.filter_conversation_messages();
-                self.status_message = Some(format!(
-                    "Found {} messages matching '{}'",
-                    self.selected_conversation
-                        .as_ref()
-                        .map_or(0, |c| c.filtered_messages.len()),
-                    self.conversation_search_query
-                ));
+                let match_count = self.selected_conversation
+                    .as_ref()
+                    .map_or(0, |c| c.search_matches.len());
+                if match_count > 0 {
+                    self.status_message = Some(format!(
+                        "Found {} messages matching '{}' (n/N to navigate)",
+                        match_count,
+                        self.conversation_search_query
+                    ));
+                    // Jump to first match
+                    self.navigate_to_next_search_match();
+                } else {
+                    self.status_message = Some(format!(
+                        "No messages found matching '{}'",
+                        self.conversation_search_query
+                    ));
+                }
             }
             KeyCode::Backspace => {
                 self.conversation_search_query.pop();
@@ -2212,6 +2260,152 @@ impl TuiApp {
             _ => {}
         }
         Ok(())
+    }
+
+    fn navigate_to_parent_message(&mut self) {
+        if let Some(ref mut conv) = self.selected_conversation {
+            if let Some(ref conversation) = conv.conversation {
+                if let Some(selected_idx) = conv.message_table_state.selected() {
+                    if let Some(selected_msg) = conv.filtered_messages.get(selected_idx) {
+                        // Find the corresponding message in the full conversation
+                        let current_msg = conversation.messages.iter().find(|m| {
+                            m.timestamp == selected_msg.timestamp && m.role == selected_msg.message.role
+                        });
+                        
+                        if let Some(msg) = current_msg {
+                            if let Some(ref parent_uuid) = msg.parent_uuid {
+                                // Find parent message index in filtered messages
+                                for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
+                                    let parent_msg = conversation.messages.iter().find(|m| {
+                                        m.timestamp == filtered_msg.timestamp 
+                                            && m.role == filtered_msg.message.role
+                                            && m.uuid == *parent_uuid
+                                    });
+                                    
+                                    if parent_msg.is_some() {
+                                        conv.message_table_state.select(Some(idx));
+                                        self.status_message = Some("Navigated to parent message".to_string());
+                                        return;
+                                    }
+                                }
+                                self.status_message = Some("Parent message not found in filtered view".to_string());
+                            } else {
+                                self.status_message = Some("This message has no parent".to_string());
+                            }
+                        }
+                    }
+                }
+            } else {
+                self.status_message = Some("Parent navigation requires full conversation data".to_string());
+            }
+        }
+    }
+
+    fn navigate_to_first_child(&mut self) {
+        if let Some(ref mut conv) = self.selected_conversation {
+            if let Some(ref conversation) = conv.conversation {
+                if let Some(selected_idx) = conv.message_table_state.selected() {
+                    if let Some(selected_msg) = conv.filtered_messages.get(selected_idx) {
+                        // Find the corresponding message in the full conversation
+                        let current_msg = conversation.messages.iter().find(|m| {
+                            m.timestamp == selected_msg.timestamp && m.role == selected_msg.message.role
+                        });
+                        
+                        if let Some(msg) = current_msg {
+                            let current_uuid = &msg.uuid;
+                            
+                            // Find first child message in filtered messages
+                            for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
+                                let child_msg = conversation.messages.iter().find(|m| {
+                                    m.timestamp == filtered_msg.timestamp 
+                                        && m.role == filtered_msg.message.role
+                                        && m.parent_uuid.as_ref() == Some(current_uuid)
+                                });
+                                
+                                if child_msg.is_some() {
+                                    conv.message_table_state.select(Some(idx));
+                                    self.status_message = Some("Navigated to first child message".to_string());
+                                    return;
+                                }
+                            }
+                            self.status_message = Some("No child messages found in filtered view".to_string());
+                        }
+                    }
+                }
+            } else {
+                self.status_message = Some("Child navigation requires full conversation data".to_string());
+            }
+        }
+    }
+
+    fn navigate_to_next_search_match(&mut self) {
+        if let Some(ref mut conv) = self.selected_conversation {
+            if conv.search_matches.is_empty() {
+                self.status_message = Some("No search matches found".to_string());
+                return;
+            }
+
+            // Increment current match index
+            conv.current_search_match = (conv.current_search_match + 1) % conv.search_matches.len();
+            
+            // Find the message index in filtered messages
+            let target_idx = conv.search_matches[conv.current_search_match];
+            
+            // Find corresponding index in filtered messages
+            for (idx, msg) in conv.filtered_messages.iter().enumerate() {
+                let orig_idx = conv.messages.iter().position(|m| {
+                    m.timestamp == msg.timestamp && m.message.role == msg.message.role
+                });
+                
+                if orig_idx == Some(target_idx) {
+                    conv.message_table_state.select(Some(idx));
+                    self.status_message = Some(format!(
+                        "Match {} of {} for '{}'",
+                        conv.current_search_match + 1,
+                        conv.search_matches.len(),
+                        self.conversation_search_query
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    fn navigate_to_previous_search_match(&mut self) {
+        if let Some(ref mut conv) = self.selected_conversation {
+            if conv.search_matches.is_empty() {
+                self.status_message = Some("No search matches found".to_string());
+                return;
+            }
+
+            // Decrement current match index
+            if conv.current_search_match == 0 {
+                conv.current_search_match = conv.search_matches.len() - 1;
+            } else {
+                conv.current_search_match -= 1;
+            }
+            
+            // Find the message index in filtered messages
+            let target_idx = conv.search_matches[conv.current_search_match];
+            
+            // Find corresponding index in filtered messages
+            for (idx, msg) in conv.filtered_messages.iter().enumerate() {
+                let orig_idx = conv.messages.iter().position(|m| {
+                    m.timestamp == msg.timestamp && m.message.role == msg.message.role
+                });
+                
+                if orig_idx == Some(target_idx) {
+                    conv.message_table_state.select(Some(idx));
+                    self.status_message = Some(format!(
+                        "Match {} of {} for '{}'",
+                        conv.current_search_match + 1,
+                        conv.search_matches.len(),
+                        self.conversation_search_query
+                    ));
+                    return;
+                }
+            }
+        }
     }
 
     fn ui(&mut self, f: &mut Frame) {
@@ -3226,15 +3420,27 @@ impl TuiApp {
                     self.conversation_search_query
                 )
             } else {
-                format!(
-                    "Esc: Back | /: Search | t: {} thinking | u: {} tools | ↑↓/jk: Navigate",
-                    if self.show_thinking_blocks {
-                        "Hide"
-                    } else {
-                        "Show"
-                    },
+                let mut base_text = format!(
+                    "Esc: Back | /: Search | p/h: Parent | l: Child | n/N: Next/Prev match | t: {} thinking | u: {} tools",
+                    if self.show_thinking_blocks { "Hide" } else { "Show" },
                     if self.show_tool_usage { "Hide" } else { "Show" }
-                )
+                );
+                
+                // Add search match info if available
+                if !self.conversation_search_query.is_empty() {
+                    if let Some(ref conv) = self.selected_conversation {
+                        if !conv.search_matches.is_empty() {
+                            base_text = format!(
+                                "{} | Matches: {}/{}",
+                                base_text,
+                                conv.current_search_match + 1,
+                                conv.search_matches.len()
+                            );
+                        }
+                    }
+                }
+                
+                base_text
             };
 
             let status = Paragraph::new(status_text)
@@ -4648,7 +4854,12 @@ impl TuiApp {
                 "text" => {
                     if let Some(text) = &part.text {
                         for line in text.lines() {
-                            content_lines.push(Line::from(line.to_string()));
+                            // Highlight search matches if there's an active search
+                            if !self.conversation_search_query.is_empty() {
+                                content_lines.push(self.highlight_search_matches(line));
+                            } else {
+                                content_lines.push(Line::from(line.to_string()));
+                            }
                         }
                     }
                 }
