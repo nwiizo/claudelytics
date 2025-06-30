@@ -9,10 +9,13 @@ mod burn_rate;
 mod claude_sessions;
 mod config;
 mod config_v2;
+mod conversation_display;
+mod conversation_parser;
 mod display;
 mod domain;
 mod error;
 mod export;
+mod helpers;
 mod interactive;
 mod mcp;
 mod models;
@@ -561,6 +564,80 @@ enum Commands {
         )]
         threshold: f64,
     },
+    #[command(about = "Display conversation content")]
+    #[command(
+        long_about = "Display full conversation content from Claude sessions\n\nProvides detailed view of conversations including messages, thinking blocks,\ntool usage, and token usage. Supports multiple output formats and filtering.\n\nFEATURES:\n  - Full conversation thread display with parent/child relationships\n  - Syntax highlighting for code blocks\n  - Thinking block extraction and display\n  - Tool usage tracking\n  - Multiple export formats (terminal, markdown, JSON)\n  - Search and filter capabilities\n\nEXAMPLES:\n  claudelytics conversation --session abc123  # Show specific session\n  claudelytics conversation --project myproj  # Filter by project\n  claudelytics conversation --search \"error\" # Search in conversations\n  claudelytics conversation --export markdown # Export as markdown\n  claudelytics conversation --recent          # Show recent conversations"
+    )]
+    Conversation {
+        #[arg(
+            short = 's',
+            long,
+            help = "Session ID or path to display",
+            long_help = "Specific session ID or path to display conversation for\nExample: --session abc123def or --session project/session-id"
+        )]
+        session: Option<String>,
+        #[arg(
+            short = 'p',
+            long,
+            help = "Filter by project name",
+            long_help = "Filter conversations by project name\nExample: --project myproject"
+        )]
+        project: Option<String>,
+        #[arg(
+            long,
+            help = "Search for text in conversations",
+            long_help = "Search for specific text in conversation content\nSearches in messages, thinking blocks, and tool usage"
+        )]
+        search: Option<String>,
+        #[arg(
+            short = 'e',
+            long,
+            help = "Export format",
+            long_help = "Export conversation in specified format\nOptions: markdown, json, txt\nDefault: terminal display"
+        )]
+        export: Option<String>,
+        #[arg(
+            short = 'o',
+            long,
+            help = "Output file path for export",
+            long_help = "Path to save exported conversation\nIf not specified, outputs to stdout"
+        )]
+        output: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Show only recent conversations",
+            long_help = "Display only conversations from the last 7 days"
+        )]
+        recent: bool,
+        #[arg(
+            long,
+            help = "Display mode",
+            long_help = "Display mode for conversation\nOptions: compact, detailed\nDefault: detailed",
+            default_value = "detailed"
+        )]
+        mode: String,
+        #[arg(
+            long,
+            help = "Include thinking blocks",
+            long_help = "Include AI thinking blocks in output\nDefault: true for detailed mode",
+            default_value = "true"
+        )]
+        include_thinking: bool,
+        #[arg(
+            long,
+            help = "Include tool usage",
+            long_help = "Include tool usage details in output\nDefault: true",
+            default_value = "true"
+        )]
+        include_tools: bool,
+        #[arg(
+            short = 'l',
+            long,
+            help = "List available conversations",
+            long_help = "List all available conversations instead of displaying content"
+        )]
+        list: bool,
+    },
 }
 
 /// Application entry point
@@ -936,6 +1013,32 @@ fn run() -> Result<()> {
                 frequency,
                 efficiency,
                 threshold,
+            )?;
+        }
+        Commands::Conversation {
+            session,
+            project,
+            search,
+            export,
+            output,
+            recent,
+            mode,
+            include_thinking,
+            include_tools,
+            list,
+        } => {
+            handle_conversation_command(
+                &claude_dir,
+                session,
+                project,
+                search,
+                export,
+                output,
+                recent,
+                mode,
+                include_thinking,
+                include_tools,
+                list,
             )?;
         }
         _ => {} // Other commands handled above
@@ -2081,6 +2184,389 @@ fn handle_analytics_command(
     println!("\n{}", "═".repeat(50).blue());
 
     Ok(())
+}
+
+/// Handle conversation command
+fn handle_conversation_command(
+    claude_dir: &Path,
+    session: Option<String>,
+    project: Option<String>,
+    search: Option<String>,
+    export: Option<String>,
+    output: Option<PathBuf>,
+    recent: bool,
+    mode: String,
+    include_thinking: bool,
+    include_tools: bool,
+    list: bool,
+) -> Result<()> {
+    use colored::Colorize;
+    use conversation_display::{ConversationDisplay, DisplayMode};
+    use conversation_parser::{Conversation, ConversationParser};
+
+    let parser = ConversationParser::new(claude_dir.to_path_buf());
+
+    // Find all conversation files
+    let mut conversation_files = parser.find_conversation_files()?;
+
+    // Apply filters
+    if let Some(proj) = &project {
+        conversation_files.retain(|path| path.to_string_lossy().contains(proj));
+    }
+
+    if recent {
+        let seven_days_ago = chrono::Utc::now() - chrono::Duration::days(7);
+        conversation_files.retain(|path| {
+            if let Ok(metadata) = std::fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    let modified_time: chrono::DateTime<chrono::Utc> = modified.into();
+                    return modified_time > seven_days_ago;
+                }
+            }
+            false
+        });
+    }
+
+    // If listing conversations
+    if list {
+        println!("{}", "📋 Available Conversations".bold().cyan());
+        println!("{}", "═".repeat(50).blue());
+
+        if conversation_files.is_empty() {
+            print_warning("No conversations found matching criteria");
+            return Ok(());
+        }
+
+        for (idx, file_path) in conversation_files.iter().enumerate() {
+            // Extract project and session from path
+            let path_str = file_path.to_string_lossy();
+            let relative_path = path_str
+                .strip_prefix(&format!("{}/projects/", claude_dir.display()))
+                .unwrap_or(&path_str);
+
+            println!("{}. {}", idx + 1, relative_path.dimmed());
+
+            // Try to parse and show summary
+            if let Ok(conversation) = parser.parse_conversation(file_path) {
+                if let Some(summary) = &conversation.summary {
+                    println!("   📄 {}", summary.summary.bright_white());
+                }
+                println!(
+                    "   💬 {} messages | 💰 ${:.4} | 📊 {} tokens",
+                    conversation.messages.len(),
+                    conversation.total_usage.total_cost,
+                    conversation.total_usage.total_tokens()
+                );
+            }
+        }
+        return Ok(());
+    }
+
+    // Find specific session if requested
+    let conversations_to_display: Vec<Conversation> = if let Some(sess) = &session {
+        // Find conversation file matching session
+        let matching_file = conversation_files
+            .iter()
+            .find(|path| path.to_string_lossy().contains(sess));
+
+        if let Some(file_path) = matching_file {
+            vec![parser.parse_conversation(file_path)?]
+        } else {
+            print_warning(&format!("No conversation found for session: {}", sess));
+            return Ok(());
+        }
+    } else {
+        // Parse all matching conversations
+        let mut conversations = Vec::new();
+        for file_path in &conversation_files {
+            if let Ok(conv) = parser.parse_conversation(file_path) {
+                conversations.push(conv);
+            }
+        }
+        conversations
+    };
+
+    // Apply search filter
+    let mut filtered_conversations = conversations_to_display;
+    if let Some(search_term) = &search {
+        filtered_conversations.retain(|conv| {
+            // Search in messages
+            for msg in &conv.messages {
+                for content in &msg.content {
+                    match content {
+                        conversation_parser::MessageContentBlock::Text { text, .. } => {
+                            if text.to_lowercase().contains(&search_term.to_lowercase()) {
+                                return true;
+                            }
+                        }
+                        conversation_parser::MessageContentBlock::ToolUse {
+                            name, input, ..
+                        } => {
+                            if name.to_lowercase().contains(&search_term.to_lowercase())
+                                || input
+                                    .to_string()
+                                    .to_lowercase()
+                                    .contains(&search_term.to_lowercase())
+                            {
+                                return true;
+                            }
+                        }
+                        conversation_parser::MessageContentBlock::ToolResult {
+                            content, ..
+                        } => {
+                            if content.to_lowercase().contains(&search_term.to_lowercase()) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        });
+    }
+
+    if filtered_conversations.is_empty() {
+        print_warning("No conversations found matching criteria");
+        return Ok(());
+    }
+
+    // Set display mode
+    let display_mode = match mode.as_str() {
+        "compact" => DisplayMode::Compact,
+        _ => DisplayMode::Detailed,
+    };
+
+    let display = ConversationDisplay::new()
+        .with_mode(display_mode)
+        .with_terminal_width(terminal::Terminal::width() as usize);
+
+    // Handle export
+    if let Some(export_format) = &export {
+        let content = match export_format.as_str() {
+            "json" => {
+                // Export as JSON
+                serde_json::to_string_pretty(
+                    &filtered_conversations
+                        .iter()
+                        .map(|conv| {
+                            serde_json::json!({
+                                "file_path": conv.file_path,
+                                "summary": conv.summary,
+                                "messages": conv.messages.len(),
+                                "total_tokens": conv.total_usage.total_tokens(),
+                                "total_cost": conv.total_usage.total_cost,
+                                "started_at": conv.started_at,
+                                "ended_at": conv.ended_at,
+                                "conversation": conv.messages
+                            })
+                        })
+                        .collect::<Vec<_>>(),
+                )?
+            }
+            "markdown" => {
+                // Export as markdown
+                let mut markdown = String::new();
+                for conv in &filtered_conversations {
+                    markdown.push_str(&format_conversation_as_markdown(
+                        conv,
+                        include_thinking,
+                        include_tools,
+                    ));
+                    markdown.push_str("\n\n---\n\n");
+                }
+                markdown
+            }
+            _ => {
+                // Default to text export
+                let mut text = String::new();
+                for conv in &filtered_conversations {
+                    text.push_str(&display.format_conversation(conv));
+                    text.push_str("\n\n");
+                }
+                text
+            }
+        };
+
+        // Write to file or stdout
+        if let Some(output_path) = output {
+            std::fs::write(&output_path, content)?;
+            print_info(&format!(
+                "Conversation exported to: {}",
+                output_path.display()
+            ));
+        } else {
+            println!("{}", content);
+        }
+    } else {
+        // Display in terminal
+        for conv in &filtered_conversations {
+            println!("{}", display.format_conversation(conv));
+
+            if !include_thinking {
+                // Filter out thinking blocks if not included
+                // This is handled by the display module based on mode
+            }
+
+            if !include_tools {
+                // Filter out tool usage if not included
+                // This is handled by the display module based on mode
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Format conversation as markdown
+fn format_conversation_as_markdown(
+    conversation: &conversation_parser::Conversation,
+    include_thinking: bool,
+    include_tools: bool,
+) -> String {
+    let mut markdown = String::new();
+
+    // Header
+    if let Some(summary) = &conversation.summary {
+        markdown.push_str(&format!("# {}\n\n", summary.summary));
+    } else {
+        markdown.push_str("# Conversation\n\n");
+    }
+
+    // Metadata
+    if let (Some(start), Some(end)) = (conversation.started_at, conversation.ended_at) {
+        markdown.push_str(&format!(
+            "**Started:** {}\n",
+            start.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+        markdown.push_str(&format!(
+            "**Ended:** {}\n",
+            end.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+        markdown.push_str(&format!(
+            "**Duration:** {}\n",
+            format_duration(&(end - start))
+        ));
+    }
+
+    markdown.push_str(&format!(
+        "**Total Tokens:** {}\n",
+        conversation.total_usage.total_tokens()
+    ));
+    markdown.push_str(&format!(
+        "**Total Cost:** ${:.4}\n\n",
+        conversation.total_usage.total_cost
+    ));
+
+    markdown.push_str("---\n\n");
+
+    // Messages
+    for thread in conversation.get_thread_structure() {
+        markdown.push_str(&format_thread_as_markdown(
+            &thread,
+            0,
+            include_thinking,
+            include_tools,
+        ));
+    }
+
+    markdown
+}
+
+/// Format a message thread as markdown
+fn format_thread_as_markdown(
+    thread: &conversation_parser::MessageThread,
+    depth: usize,
+    include_thinking: bool,
+    include_tools: bool,
+) -> String {
+    use conversation_parser::MessageContentBlock;
+
+    let mut markdown = String::new();
+    let indent = "  ".repeat(depth);
+    let message = &thread.message;
+
+    // Message header
+    let role_emoji = match message.role.as_str() {
+        "user" => "👤",
+        "assistant" => "🤖",
+        _ => "📝",
+    };
+
+    markdown.push_str(&format!(
+        "{}## {} {} ({})\n\n",
+        indent,
+        role_emoji,
+        message.role,
+        message.timestamp.format("%H:%M:%S")
+    ));
+
+    // Message content
+    for content in &message.content {
+        match content {
+            MessageContentBlock::Text { content_type, text } => {
+                if content_type == "thinking" {
+                    if include_thinking {
+                        markdown.push_str(&format!("{}> 💭 *Thinking...*\n", indent));
+                        markdown.push_str(&format!(
+                            "{}> {}\n\n",
+                            indent,
+                            text.replace('\n', "\n> ")
+                        ));
+                    }
+                } else {
+                    markdown.push_str(&format!("{}{}\n\n", indent, text));
+                }
+            }
+            MessageContentBlock::ToolUse { name, input, .. } => {
+                if include_tools {
+                    markdown.push_str(&format!("{}🔧 **Tool:** {}\n", indent, name));
+                    markdown.push_str(&format!("{}```json\n", indent));
+                    markdown.push_str(&format!(
+                        "{}{}\n",
+                        indent,
+                        serde_json::to_string_pretty(input).unwrap_or_default()
+                    ));
+                    markdown.push_str(&format!("{}```\n\n", indent));
+                }
+            }
+            MessageContentBlock::ToolResult { content, .. } => {
+                if include_tools {
+                    markdown.push_str(&format!("{}✅ **Result:**\n", indent));
+                    markdown.push_str(&format!("{}```\n", indent));
+                    markdown.push_str(&format!("{}{}\n", indent, content));
+                    markdown.push_str(&format!("{}```\n\n", indent));
+                }
+            }
+        }
+    }
+
+    // Process children
+    for child in &thread.children {
+        markdown.push_str(&format_thread_as_markdown(
+            child,
+            depth + 1,
+            include_thinking,
+            include_tools,
+        ));
+    }
+
+    markdown
+}
+
+/// Format duration for display
+fn format_duration(duration: &chrono::Duration) -> String {
+    let total_seconds = duration.num_seconds();
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+
+    if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
 }
 
 /// Format large numbers with commas

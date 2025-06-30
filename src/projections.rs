@@ -1,6 +1,7 @@
 use chrono::{Datelike, Duration, NaiveDate, Utc};
 use serde::Serialize;
 
+use crate::helpers::calculate_average;
 use crate::models::DailyUsageMap;
 
 /// Time series data point for projections
@@ -73,35 +74,29 @@ impl ProjectionCalculator {
 
     /// Calculate usage projections from daily data
     pub fn calculate_projections(&self, daily_usage: &DailyUsageMap) -> UsageProjection {
-        let today = Utc::now().date_naive();
-        let start_date = today - Duration::days(self.history_days);
+        let data_points = self.collect_data_points(daily_usage, |usage| usage.total_cost);
+        self.calculate_projection_from_points(&data_points, self.cost_limit)
+    }
 
-        // Collect recent data points
-        let mut data_points: Vec<DataPoint> = daily_usage
-            .iter()
-            .filter(|(date, _)| **date >= start_date)
-            .map(|(date, usage)| DataPoint {
-                date: *date,
-                value: usage.total_cost,
-            })
-            .collect();
-
-        data_points.sort_by_key(|p| p.date);
-
+    /// Common projection calculation logic
+    fn calculate_projection_from_points(&self, data_points: &[DataPoint], limit: Option<f64>) -> UsageProjection {
         // Calculate averages
-        let daily_average = self.calculate_daily_average(&data_points);
-        let weekly_average = self.calculate_weekly_average(&data_points);
-        let monthly_average = self.calculate_monthly_average(&data_points);
+        let daily_average = self.calculate_daily_average(data_points);
+        let weekly_average = self.calculate_weekly_average(data_points);
+        let monthly_average = self.calculate_monthly_average(data_points);
 
         // Calculate trend and growth rate
-        let (trend, growth_rate) = self.calculate_trend(&data_points);
+        let (trend, growth_rate) = self.calculate_trend(data_points);
 
         // Generate projections
-        let projections = self.generate_projections(&data_points, growth_rate);
+        let projections = self.generate_projections(data_points, growth_rate);
 
         // Calculate when limits will be reached
-        let (days_until_limit, limit_date) =
-            self.calculate_limit_timing(&data_points, daily_average, growth_rate);
+        let (days_until_limit, limit_date) = if let Some(lim) = limit {
+            self.calculate_limit_timing_internal(data_points, daily_average, growth_rate, lim)
+        } else {
+            (None, None)
+        };
 
         // Estimate monthly cost based on projections
         let estimated_monthly_cost = self.estimate_monthly_cost(&projections, daily_average);
@@ -119,38 +114,53 @@ impl ProjectionCalculator {
         }
     }
 
+    /// Collect data points from daily usage
+    fn collect_data_points<F>(&self, daily_usage: &DailyUsageMap, value_fn: F) -> Vec<DataPoint>
+    where
+        F: Fn(&crate::models::TokenUsage) -> f64,
+    {
+        let today = Utc::now().date_naive();
+        let start_date = today - Duration::days(self.history_days);
+
+        let mut data_points: Vec<DataPoint> = daily_usage
+            .iter()
+            .filter(|(date, _)| **date >= start_date)
+            .map(|(date, usage)| DataPoint {
+                date: *date,
+                value: value_fn(usage),
+            })
+            .collect();
+
+        data_points.sort_by_key(|p| p.date);
+        data_points
+    }
+
     /// Calculate daily average from recent data
     fn calculate_daily_average(&self, data_points: &[DataPoint]) -> f64 {
-        if data_points.is_empty() {
-            return 0.0;
-        }
-
-        let total: f64 = data_points.iter().map(|p| p.value).sum();
-        total / data_points.len() as f64
+        let values: Vec<f64> = data_points.iter().map(|p| p.value).collect();
+        calculate_average(&values)
     }
 
     /// Calculate weekly average
     fn calculate_weekly_average(&self, data_points: &[DataPoint]) -> f64 {
-        if data_points.len() < 7 {
-            return self.calculate_daily_average(data_points) * 7.0;
-        }
-
-        // Get last 7 days
-        let last_week: Vec<&DataPoint> = data_points.iter().rev().take(7).collect();
-        let weekly_total: f64 = last_week.iter().map(|p| p.value).sum();
-        weekly_total
+        self.calculate_period_average(data_points, 7)
     }
 
     /// Calculate monthly average
     fn calculate_monthly_average(&self, data_points: &[DataPoint]) -> f64 {
-        if data_points.len() < 30 {
-            return self.calculate_daily_average(data_points) * 30.0;
+        self.calculate_period_average(data_points, 30)
+    }
+
+    /// Calculate average for a given period
+    fn calculate_period_average(&self, data_points: &[DataPoint], period_days: usize) -> f64 {
+        if data_points.len() < period_days {
+            return self.calculate_daily_average(data_points) * period_days as f64;
         }
 
-        // Get last 30 days
-        let last_month: Vec<&DataPoint> = data_points.iter().rev().take(30).collect();
-        let monthly_total: f64 = last_month.iter().map(|p| p.value).sum();
-        monthly_total
+        // Get last N days
+        let period_data: Vec<&DataPoint> = data_points.iter().rev().take(period_days).collect();
+        let period_total: f64 = period_data.iter().map(|p| p.value).sum();
+        period_total
     }
 
     /// Calculate trend direction and growth rate using linear regression
@@ -241,18 +251,18 @@ impl ProjectionCalculator {
         projections
     }
 
-    /// Calculate when limits will be reached
-    fn calculate_limit_timing(
+    /// Calculate when limits will be reached (internal method with explicit limit)
+    fn calculate_limit_timing_internal(
         &self,
         data_points: &[DataPoint],
         daily_average: f64,
         growth_rate: f64,
+        limit: f64,
     ) -> (Option<i64>, Option<NaiveDate>) {
-        if self.cost_limit.is_none() || daily_average <= 0.0 {
+        if daily_average <= 0.0 {
             return (None, None);
         }
 
-        let cost_limit = self.cost_limit.unwrap();
         let today = Utc::now().date_naive();
 
         // Calculate cumulative cost for current month
@@ -263,11 +273,11 @@ impl ProjectionCalculator {
             .map(|p| p.value)
             .sum();
 
-        if current_month_cost >= cost_limit {
+        if current_month_cost >= limit {
             return (Some(0), Some(today));
         }
 
-        let remaining_budget = cost_limit - current_month_cost;
+        let remaining_budget = limit - current_month_cost;
         let daily_burn = daily_average * (1.0 + growth_rate / 100.0);
 
         if daily_burn <= 0.0 {
@@ -443,5 +453,28 @@ mod tests {
         // With $1/day and $50 limit, should have ~45 days left (5 days already used)
         assert!(projection.days_until_limit.is_some());
         assert!(projection.limit_date.is_some());
+    }
+
+    #[test]
+    fn test_period_average_calculation() {
+        let calculator = ProjectionCalculator::new();
+        let mut data_points = vec![];
+        
+        // Add 10 days of data
+        for i in 0..10 {
+            data_points.push(DataPoint {
+                date: Utc::now().date_naive() - Duration::days(i),
+                value: 10.0,
+            });
+        }
+        
+        // Test period averages
+        let daily_avg = calculator.calculate_daily_average(&data_points);
+        let weekly_avg = calculator.calculate_weekly_average(&data_points);
+        let monthly_avg = calculator.calculate_monthly_average(&data_points);
+        
+        assert_eq!(daily_avg, 10.0);
+        assert_eq!(weekly_avg, 70.0); // 7 days * 10.0
+        assert_eq!(monthly_avg, 300.0); // daily_avg (10.0) * 30 days
     }
 }

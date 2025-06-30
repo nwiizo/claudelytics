@@ -1,3 +1,4 @@
+use crate::helpers::{calculate_efficiency, compare_floats};
 use crate::models::{
     DailyReport, DailyUsage, DailyUsageMap, MonthlyReport, MonthlyUsage, SessionReport,
     SessionUsage, SessionUsageMap, TokenUsage, TokenUsageTotals,
@@ -184,30 +185,101 @@ fn month_to_num(month: &str) -> u32 {
     }
 }
 
-fn sort_daily_entries(
-    entries: &mut [DailyUsage],
+// Generic sorting traits
+trait Sortable {
+    fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering;
+    fn default_sort_field() -> SortField;
+}
+
+impl Sortable for DailyUsage {
+    fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering {
+        match field {
+            SortField::Date => self.date.cmp(&other.date),
+            SortField::Cost => compare_floats(self.total_cost, other.total_cost),
+            SortField::Tokens => self.total_tokens.cmp(&other.total_tokens),
+            _ => self.date.cmp(&other.date), // Default to date for unsupported fields
+        }
+    }
+    
+    fn default_sort_field() -> SortField {
+        SortField::Date
+    }
+}
+
+impl Sortable for SessionUsage {
+    fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering {
+        match field {
+            SortField::Date => self.last_activity.cmp(&other.last_activity),
+            SortField::Cost => compare_floats(self.total_cost, other.total_cost),
+            SortField::Tokens => self.total_tokens.cmp(&other.total_tokens),
+            SortField::Efficiency => {
+                let eff_a = calculate_efficiency(self.total_tokens, self.total_cost);
+                let eff_b = calculate_efficiency(other.total_tokens, other.total_cost);
+                compare_floats(eff_a, eff_b)
+            }
+            SortField::Project => self.project_path.cmp(&other.project_path),
+        }
+    }
+    
+    fn default_sort_field() -> SortField {
+        SortField::Cost
+    }
+}
+
+impl Sortable for MonthlyUsage {
+    fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering {
+        match field {
+            SortField::Date => {
+                let month_num_a = month_to_num(&self.month);
+                let month_num_b = month_to_num(&other.month);
+                match self.year.cmp(&other.year) {
+                    std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
+                    other => other,
+                }
+            }
+            SortField::Cost => compare_floats(self.total_cost, other.total_cost),
+            SortField::Tokens => self.total_tokens.cmp(&other.total_tokens),
+            _ => {
+                let month_num_a = month_to_num(&self.month);
+                let month_num_b = month_to_num(&other.month);
+                match self.year.cmp(&other.year) {
+                    std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
+                    other => other,
+                }
+            } // Default to date
+        }
+    }
+    
+    fn default_sort_field() -> SortField {
+        SortField::Date
+    }
+}
+
+// Generic sort function
+fn sort_entries<T: Sortable>(
+    entries: &mut [T],
     sort_field: Option<SortField>,
     sort_order: Option<SortOrder>,
 ) {
-    let field = sort_field.unwrap_or(SortField::Date);
+    let field = sort_field.unwrap_or_else(T::default_sort_field);
     let order = sort_order.unwrap_or(SortOrder::Desc);
 
     entries.sort_by(|a, b| {
-        let cmp = match field {
-            SortField::Date => a.date.cmp(&b.date),
-            SortField::Cost => a
-                .total_cost
-                .partial_cmp(&b.total_cost)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            SortField::Tokens => a.total_tokens.cmp(&b.total_tokens),
-            _ => a.date.cmp(&b.date), // Default to date for unsupported fields
-        };
-
+        let cmp = a.compare_by_field(b, field);
         match order {
             SortOrder::Asc => cmp,
             SortOrder::Desc => cmp.reverse(),
         }
     });
+}
+
+// Wrapper functions for backward compatibility
+fn sort_daily_entries(
+    entries: &mut [DailyUsage],
+    sort_field: Option<SortField>,
+    sort_order: Option<SortOrder>,
+) {
+    sort_entries(entries, sort_field, sort_order);
 }
 
 fn sort_session_entries(
@@ -215,40 +287,7 @@ fn sort_session_entries(
     sort_field: Option<SortField>,
     sort_order: Option<SortOrder>,
 ) {
-    let field = sort_field.unwrap_or(SortField::Cost);
-    let order = sort_order.unwrap_or(SortOrder::Desc);
-
-    entries.sort_by(|a, b| {
-        let cmp = match field {
-            SortField::Date => a.last_activity.cmp(&b.last_activity),
-            SortField::Cost => a
-                .total_cost
-                .partial_cmp(&b.total_cost)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            SortField::Tokens => a.total_tokens.cmp(&b.total_tokens),
-            SortField::Efficiency => {
-                let eff_a = if a.total_cost > 0.0 {
-                    a.total_tokens as f64 / a.total_cost
-                } else {
-                    0.0
-                };
-                let eff_b = if b.total_cost > 0.0 {
-                    b.total_tokens as f64 / b.total_cost
-                } else {
-                    0.0
-                };
-                eff_a
-                    .partial_cmp(&eff_b)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            }
-            SortField::Project => a.project_path.cmp(&b.project_path),
-        };
-
-        match order {
-            SortOrder::Asc => cmp,
-            SortOrder::Desc => cmp.reverse(),
-        }
-    });
+    sort_entries(entries, sort_field, sort_order);
 }
 
 fn sort_monthly_entries(
@@ -256,39 +295,7 @@ fn sort_monthly_entries(
     sort_field: Option<SortField>,
     sort_order: Option<SortOrder>,
 ) {
-    let field = sort_field.unwrap_or(SortField::Date);
-    let order = sort_order.unwrap_or(SortOrder::Desc);
-
-    entries.sort_by(|a, b| {
-        let cmp = match field {
-            SortField::Date => {
-                let month_num_a = month_to_num(&a.month);
-                let month_num_b = month_to_num(&b.month);
-                match a.year.cmp(&b.year) {
-                    std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
-                    other => other,
-                }
-            }
-            SortField::Cost => a
-                .total_cost
-                .partial_cmp(&b.total_cost)
-                .unwrap_or(std::cmp::Ordering::Equal),
-            SortField::Tokens => a.total_tokens.cmp(&b.total_tokens),
-            _ => {
-                let month_num_a = month_to_num(&a.month);
-                let month_num_b = month_to_num(&b.month);
-                match a.year.cmp(&b.year) {
-                    std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
-                    other => other,
-                }
-            } // Default to date
-        };
-
-        match order {
-            SortOrder::Asc => cmp,
-            SortOrder::Desc => cmp.reverse(),
-        }
-    });
+    sort_entries(entries, sort_field, sort_order);
 }
 
 fn parse_session_path(session_path: &str) -> (String, String) {
