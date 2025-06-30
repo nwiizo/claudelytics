@@ -820,7 +820,7 @@ mod tests {
     #[test]
     fn test_table_mode_detection() {
         // Test mode detection based on width
-        assert_eq!(TableMode::detect().min_width() <= Terminal::width(), true);
+        assert!(TableMode::detect().min_width() <= Terminal::width());
     }
 
     #[test]
