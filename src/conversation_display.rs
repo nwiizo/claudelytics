@@ -713,11 +713,23 @@ fn format_duration(duration: &chrono::Duration) -> String {
 
 impl ConversationDisplay {
     /// Format a single conversation message for TUI display
+    #[allow(dead_code)]
     pub fn format_conversation_message_for_tui(
         &self,
         message: &ConversationMessage,
         show_thinking: bool,
         show_tools: bool,
+    ) -> Text<'static> {
+        self.format_conversation_message_for_tui_with_search(message, show_thinking, show_tools, "")
+    }
+
+    /// Format a single conversation message for TUI display with search highlighting
+    pub fn format_conversation_message_for_tui_with_search(
+        &self,
+        message: &ConversationMessage,
+        show_thinking: bool,
+        show_tools: bool,
+        search_query: &str,
     ) -> Text<'static> {
         let mut lines = Vec::new();
 
@@ -761,15 +773,31 @@ impl ConversationDisplay {
                                         .add_modifier(Modifier::ITALIC),
                                 )]));
                                 for line in text.lines() {
-                                    lines.push(Line::from(vec![
-                                        Span::raw("  "),
-                                        Span::styled(
-                                            line.to_string(),
-                                            Style::default()
-                                                .fg(Color::DarkGray)
-                                                .add_modifier(Modifier::ITALIC),
-                                        ),
-                                    ]));
+                                    if search_query.is_empty() {
+                                        lines.push(Line::from(vec![
+                                            Span::raw("  "),
+                                            Span::styled(
+                                                line.to_string(),
+                                                Style::default()
+                                                    .fg(Color::DarkGray)
+                                                    .add_modifier(Modifier::ITALIC),
+                                            ),
+                                        ]));
+                                    } else {
+                                        let highlighted =
+                                            Self::highlight_search_matches(line, search_query);
+                                        // Add indent and style to all spans
+                                        let mut new_spans = vec![Span::raw("  ")];
+                                        for span in highlighted.spans {
+                                            new_spans.push(Span::styled(
+                                                span.content.to_string(),
+                                                span.style
+                                                    .fg(Color::DarkGray)
+                                                    .add_modifier(Modifier::ITALIC),
+                                            ));
+                                        }
+                                        lines.push(Line::from(new_spans));
+                                    }
                                 }
                             }
                         }
@@ -800,7 +828,15 @@ impl ConversationDisplay {
                                         Style::default().fg(Color::Green),
                                     )]));
                                 } else {
-                                    lines.push(Line::from(line.to_string()));
+                                    // Apply search highlighting if query is provided
+                                    if search_query.is_empty() {
+                                        lines.push(Line::from(line.to_string()));
+                                    } else {
+                                        lines.push(Self::highlight_search_matches(
+                                            line,
+                                            search_query,
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -872,6 +908,45 @@ impl ConversationDisplay {
         }
 
         Text::from(lines)
+    }
+
+    /// Highlight search matches in text
+    fn highlight_search_matches(text: &str, search_query: &str) -> Line<'static> {
+        if search_query.is_empty() {
+            return Line::from(text.to_string());
+        }
+
+        let query = search_query.to_lowercase();
+        let text_lower = text.to_lowercase();
+        let mut spans = Vec::new();
+        let mut last_end = 0;
+
+        // Find all occurrences of the search query
+        for (start, _) in text_lower.match_indices(&query) {
+            // Add text before the match
+            if start > last_end {
+                spans.push(Span::raw(text[last_end..start].to_string()));
+            }
+
+            // Add the highlighted match
+            let end = start + query.len();
+            spans.push(Span::styled(
+                text[start..end].to_string(),
+                Style::default()
+                    .bg(Color::Yellow)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+            last_end = end;
+        }
+
+        // Add remaining text after the last match
+        if last_end < text.len() {
+            spans.push(Span::raw(text[last_end..].to_string()));
+        }
+
+        Line::from(spans)
     }
 }
 

@@ -2164,7 +2164,7 @@ impl TuiApp {
             // Clear search matches
             conv.search_matches.clear();
             conv.current_search_match = 0;
-            
+
             conv.filtered_messages = conv
                 .messages
                 .iter()
@@ -2180,12 +2180,12 @@ impl TuiApp {
                                 .as_ref()
                                 .is_some_and(|text| text.to_lowercase().contains(&query))
                         });
-                        
+
                         // Track search matches
                         if has_match {
                             conv.search_matches.push(idx);
                         }
-                        
+
                         has_match
                     };
 
@@ -2231,14 +2231,14 @@ impl TuiApp {
             KeyCode::Enter => {
                 self.conversation_search_mode = false;
                 self.filter_conversation_messages();
-                let match_count = self.selected_conversation
+                let match_count = self
+                    .selected_conversation
                     .as_ref()
                     .map_or(0, |c| c.search_matches.len());
                 if match_count > 0 {
                     self.status_message = Some(format!(
                         "Found {} messages matching '{}' (n/N to navigate)",
-                        match_count,
-                        self.conversation_search_query
+                        match_count, self.conversation_search_query
                     ));
                     // Jump to first match
                     self.navigate_to_next_search_match();
@@ -2269,34 +2269,40 @@ impl TuiApp {
                     if let Some(selected_msg) = conv.filtered_messages.get(selected_idx) {
                         // Find the corresponding message in the full conversation
                         let current_msg = conversation.messages.iter().find(|m| {
-                            m.timestamp == selected_msg.timestamp && m.role == selected_msg.message.role
+                            m.timestamp == selected_msg.timestamp
+                                && m.role == selected_msg.message.role
                         });
-                        
+
                         if let Some(msg) = current_msg {
                             if let Some(ref parent_uuid) = msg.parent_uuid {
                                 // Find parent message index in filtered messages
-                                for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
+                                for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate()
+                                {
                                     let parent_msg = conversation.messages.iter().find(|m| {
-                                        m.timestamp == filtered_msg.timestamp 
+                                        m.timestamp == filtered_msg.timestamp
                                             && m.role == filtered_msg.message.role
                                             && m.uuid == *parent_uuid
                                     });
-                                    
+
                                     if parent_msg.is_some() {
                                         conv.message_table_state.select(Some(idx));
-                                        self.status_message = Some("Navigated to parent message".to_string());
+                                        self.status_message =
+                                            Some("Navigated to parent message".to_string());
                                         return;
                                     }
                                 }
-                                self.status_message = Some("Parent message not found in filtered view".to_string());
+                                self.status_message =
+                                    Some("Parent message not found in filtered view".to_string());
                             } else {
-                                self.status_message = Some("This message has no parent".to_string());
+                                self.status_message =
+                                    Some("This message has no parent".to_string());
                             }
                         }
                     }
                 }
             } else {
-                self.status_message = Some("Parent navigation requires full conversation data".to_string());
+                self.status_message =
+                    Some("Parent navigation requires full conversation data".to_string());
             }
         }
     }
@@ -2308,32 +2314,36 @@ impl TuiApp {
                     if let Some(selected_msg) = conv.filtered_messages.get(selected_idx) {
                         // Find the corresponding message in the full conversation
                         let current_msg = conversation.messages.iter().find(|m| {
-                            m.timestamp == selected_msg.timestamp && m.role == selected_msg.message.role
+                            m.timestamp == selected_msg.timestamp
+                                && m.role == selected_msg.message.role
                         });
-                        
+
                         if let Some(msg) = current_msg {
                             let current_uuid = &msg.uuid;
-                            
+
                             // Find first child message in filtered messages
                             for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
                                 let child_msg = conversation.messages.iter().find(|m| {
-                                    m.timestamp == filtered_msg.timestamp 
+                                    m.timestamp == filtered_msg.timestamp
                                         && m.role == filtered_msg.message.role
                                         && m.parent_uuid.as_ref() == Some(current_uuid)
                                 });
-                                
+
                                 if child_msg.is_some() {
                                     conv.message_table_state.select(Some(idx));
-                                    self.status_message = Some("Navigated to first child message".to_string());
+                                    self.status_message =
+                                        Some("Navigated to first child message".to_string());
                                     return;
                                 }
                             }
-                            self.status_message = Some("No child messages found in filtered view".to_string());
+                            self.status_message =
+                                Some("No child messages found in filtered view".to_string());
                         }
                     }
                 }
             } else {
-                self.status_message = Some("Child navigation requires full conversation data".to_string());
+                self.status_message =
+                    Some("Child navigation requires full conversation data".to_string());
             }
         }
     }
@@ -2347,16 +2357,16 @@ impl TuiApp {
 
             // Increment current match index
             conv.current_search_match = (conv.current_search_match + 1) % conv.search_matches.len();
-            
+
             // Find the message index in filtered messages
             let target_idx = conv.search_matches[conv.current_search_match];
-            
+
             // Find corresponding index in filtered messages
             for (idx, msg) in conv.filtered_messages.iter().enumerate() {
                 let orig_idx = conv.messages.iter().position(|m| {
                     m.timestamp == msg.timestamp && m.message.role == msg.message.role
                 });
-                
+
                 if orig_idx == Some(target_idx) {
                     conv.message_table_state.select(Some(idx));
                     self.status_message = Some(format!(
@@ -2384,16 +2394,16 @@ impl TuiApp {
             } else {
                 conv.current_search_match -= 1;
             }
-            
+
             // Find the message index in filtered messages
             let target_idx = conv.search_matches[conv.current_search_match];
-            
+
             // Find corresponding index in filtered messages
             for (idx, msg) in conv.filtered_messages.iter().enumerate() {
                 let orig_idx = conv.messages.iter().position(|m| {
                     m.timestamp == msg.timestamp && m.message.role == msg.message.role
                 });
-                
+
                 if orig_idx == Some(target_idx) {
                     conv.message_table_state.select(Some(idx));
                     self.status_message = Some(format!(
@@ -2406,6 +2416,45 @@ impl TuiApp {
                 }
             }
         }
+    }
+
+    #[allow(dead_code)]
+    fn highlight_search_matches(&self, text: &str) -> Line<'static> {
+        if self.conversation_search_query.is_empty() {
+            return Line::from(text.to_string());
+        }
+
+        let query = self.conversation_search_query.to_lowercase();
+        let text_lower = text.to_lowercase();
+        let mut spans = Vec::new();
+        let mut last_end = 0;
+
+        // Find all occurrences of the search query
+        for (start, _) in text_lower.match_indices(&query) {
+            // Add text before the match
+            if start > last_end {
+                spans.push(Span::raw(text[last_end..start].to_string()));
+            }
+
+            // Add the highlighted match
+            let end = start + query.len();
+            spans.push(Span::styled(
+                text[start..end].to_string(),
+                Style::default()
+                    .bg(Color::Yellow)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            ));
+
+            last_end = end;
+        }
+
+        // Add remaining text after the last match
+        if last_end < text.len() {
+            spans.push(Span::raw(text[last_end..].to_string()));
+        }
+
+        Line::from(spans)
     }
 
     fn ui(&mut self, f: &mut Frame) {
@@ -3302,11 +3351,14 @@ impl TuiApp {
 
                         if let Some(adv_msg) = advanced_message {
                             // Use conversation_display to format the message with syntax highlighting
-                            let formatted_text = conv.display.format_conversation_message_for_tui(
-                                adv_msg,
-                                self.show_thinking_blocks,
-                                self.show_tool_usage,
-                            );
+                            let formatted_text = conv
+                                .display
+                                .format_conversation_message_for_tui_with_search(
+                                    adv_msg,
+                                    self.show_thinking_blocks,
+                                    self.show_tool_usage,
+                                    &self.conversation_search_query,
+                                );
                             content_lines = formatted_text.lines;
                         } else {
                             // Fallback to basic formatting
@@ -3422,10 +3474,14 @@ impl TuiApp {
             } else {
                 let mut base_text = format!(
                     "Esc: Back | /: Search | p/h: Parent | l: Child | n/N: Next/Prev match | t: {} thinking | u: {} tools",
-                    if self.show_thinking_blocks { "Hide" } else { "Show" },
+                    if self.show_thinking_blocks {
+                        "Hide"
+                    } else {
+                        "Show"
+                    },
                     if self.show_tool_usage { "Hide" } else { "Show" }
                 );
-                
+
                 // Add search match info if available
                 if !self.conversation_search_query.is_empty() {
                     if let Some(ref conv) = self.selected_conversation {
@@ -3439,7 +3495,7 @@ impl TuiApp {
                         }
                     }
                 }
-                
+
                 base_text
             };
 
