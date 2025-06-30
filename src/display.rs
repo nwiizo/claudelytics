@@ -1,5 +1,6 @@
 use crate::burn_rate::BurnRateCalculator;
 use crate::models::{DailyReport, MonthlyReport, SessionReport};
+use crate::responsive_tables::{ResponsiveTable, display_responsive_summary};
 use crate::terminal::{DisplayMode, Terminal};
 use chrono::Local;
 use colored::*;
@@ -1031,6 +1032,140 @@ pub fn print_error(message: &str) {
 
 pub fn print_info(message: &str) {
     println!("{} {}", "Info:".blue(), message);
+}
+
+/// Display daily report with responsive table layout
+pub fn display_daily_report_responsive(report: &DailyReport) {
+    // Header with timestamp and separator
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("{}", Terminal::separator('═').bright_black());
+    println!(
+        "{}  {}",
+        "📊 Claude Code Usage Analytics".bright_blue().bold(),
+        format!("Generated {}", timestamp).dimmed()
+    );
+    println!("{}", Terminal::separator('═').bright_black());
+    println!();
+
+    // Quick summary using responsive display
+    let context = format!("{} days", report.daily.len());
+    display_responsive_summary(&report.totals, &context);
+    println!();
+
+    // Display burn rate metrics if available
+    if !report.daily.is_empty() {
+        display_burn_rate_metrics(&report.daily);
+        println!();
+    }
+
+    // Recent activity
+    if !report.daily.is_empty() {
+        display_enhanced_recent_activity(&report.daily);
+        println!();
+    }
+
+    // Responsive table for daily breakdown
+    if !report.daily.is_empty() {
+        println!("{}", Terminal::separator('─').bright_black());
+        println!(
+            "{}",
+            "📋 Daily Breakdown (Responsive)".bright_green().bold()
+        );
+        println!("{}", Terminal::separator('─').bright_black());
+
+        let responsive_table = ResponsiveTable::new();
+        responsive_table.display_daily_report(report);
+    }
+
+    // Footer
+    println!();
+    println!("{}", Terminal::separator('═').bright_black());
+}
+
+/// Display session report with responsive table layout
+pub fn display_session_report_responsive(report: &SessionReport) {
+    // Header with timestamp and separator
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("{}", Terminal::separator('═').bright_black());
+    println!(
+        "{}  {}",
+        "📊 Claude Code Session Analytics".bright_blue().bold(),
+        format!("Generated {}", timestamp).dimmed()
+    );
+    println!("{}", Terminal::separator('═').bright_black());
+    println!();
+
+    // Enhanced session summary using responsive display
+    let context = format!("{} sessions", report.sessions.len());
+    display_responsive_summary(&report.totals, &context);
+    println!();
+
+    // Top sessions with better formatting
+    if report.sessions.len() > 5 {
+        display_enhanced_top_sessions(&report.sessions);
+        println!();
+    }
+
+    // Responsive table for session details
+    if !report.sessions.is_empty() {
+        println!("{}", Terminal::separator('─').bright_black());
+        println!(
+            "{}",
+            "📋 Session Details (Responsive)".bright_green().bold()
+        );
+        println!("{}", Terminal::separator('─').bright_black());
+
+        let responsive_table = ResponsiveTable::new();
+        responsive_table.display_session_report(report);
+    }
+
+    // Footer
+    println!();
+    println!("{}", Terminal::separator('═').bright_black());
+}
+
+/// Display billing blocks with responsive table layout
+pub fn display_billing_blocks_responsive(
+    blocks: &[(chrono::NaiveDate, &crate::billing_blocks::BillingBlock)],
+) {
+    // Header
+    println!("{}", Terminal::separator('═').bright_black());
+    println!(
+        "{}",
+        "💰 5-Hour Billing Blocks (Responsive)".bright_blue().bold()
+    );
+    println!("{}", Terminal::separator('═').bright_black());
+    println!();
+
+    if blocks.is_empty() {
+        println!("No billing block data available.");
+        return;
+    }
+
+    // Calculate totals
+    let mut total_cost = 0.0;
+    let mut total_tokens = 0u64;
+    for (_, block) in blocks {
+        total_cost += block.usage.total_cost;
+        total_tokens += block.usage.total_tokens();
+    }
+
+    // Summary
+    println!(
+        "Total across {} blocks: {} ({} tokens)",
+        blocks.len(),
+        format_currency(total_cost).bright_green().bold(),
+        format_number(total_tokens).bright_magenta().bold()
+    );
+    println!();
+
+    // Responsive table
+    let responsive_table = ResponsiveTable::new();
+    responsive_table.display_billing_blocks(blocks);
+
+    // Footer
+    println!();
+    println!("{}", Terminal::separator('═').bright_black());
 }
 
 // Create a simple structure for family aggregation

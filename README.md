@@ -26,6 +26,7 @@ A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token c
 - **🎨 Enhanced TUI**: Full-featured terminal interface with 6 tabs including billing blocks
 - **🚀 Advanced TUI**: Professional-grade analytics with 9 tabs, drill-down, comparison, and live monitoring
 - **👀 Watch Mode**: Real-time monitoring with automatic updates
+- **🔥 Live Dashboard**: Real-time token burn rate monitoring with projections and alerts
 - **⚡ Today Filter**: `--today` flag for quick current day analysis
 
 ### Export & Integration
@@ -72,7 +73,24 @@ sudo cp target/release/claudelytics /usr/local/bin/
 ```bash
 # Download and run install script
 curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash
+
+# Install to custom directory
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash -s -- --dir ~/.local/bin
+
+# Install specific version
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash -s -- --version v0.4.3
+
+# View install options
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash -s -- --help
 ```
+
+The install script:
+- Automatically detects your OS and architecture
+- Downloads the appropriate pre-built binary
+- Verifies SHA256 checksums when available
+- Supports both `curl` and `wget`
+- Installs to `/usr/local/bin` by default (or `~/.local/bin` for non-root users)
+- Checks if the install directory is in your PATH
 
 ### Prerequisites
 
@@ -102,6 +120,10 @@ claudelytics watch
 
 # Export all data to CSV
 claudelytics export -o reports
+
+# View conversation content (NEW)
+claudelytics conversation --list
+claudelytics conversation --session abc123
 ```
 
 ## 📖 Usage
@@ -120,6 +142,13 @@ claudelytics interactive
 
 # Real-time monitoring
 claudelytics watch
+
+# Live Dashboard (NEW)
+claudelytics live                    # Real-time token burn rate dashboard
+claudelytics live --refresh 10       # Update every 10 seconds
+claudelytics live --token-limit 1000000  # Set token limit warnings
+claudelytics live --cost-limit 50    # Set daily cost limit ($50)
+claudelytics blocks --live           # Alternative: use blocks command with live mode
 
 # Terminal User Interface
 claudelytics tui                    # Enhanced TUI (5 tabs)
@@ -190,6 +219,37 @@ claudelytics export --sessions -o sessions_report.csv
 claudelytics export --summary -o summary_report.csv
 ```
 
+### Conversation Viewing (NEW)
+
+```bash
+# List all available conversations
+claudelytics conversation --list
+
+# View specific conversation by session ID
+claudelytics conversation --session abc123
+
+# Filter conversations by project
+claudelytics conversation --project myproject
+
+# Search within conversations
+claudelytics conversation --search "error handling"
+
+# Export conversation to markdown
+claudelytics conversation --session abc123 --export markdown -o conversation.md
+
+# Export conversation to JSON
+claudelytics conversation --session abc123 --export json
+
+# Show only recent conversations (last 7 days)
+claudelytics conversation --recent --list
+
+# Compact display mode
+claudelytics conversation --session abc123 --mode compact
+
+# Filter content types
+claudelytics conversation --session abc123 --include-thinking --include-tools
+```
+
 ### Model Filtering
 
 ```bash
@@ -249,6 +309,47 @@ The `--by-model` flag supports multiple display formats via the `CLAUDELYTICS_DI
 
 These formats are designed to work across all terminals and avoid Unicode character alignment issues.
 
+### Live Dashboard
+
+The live dashboard provides real-time monitoring of your Claude usage with automatic refresh:
+
+```bash
+# Start live dashboard with default settings (5-second refresh)
+claudelytics live
+
+# Custom refresh interval (10 seconds)
+claudelytics live --refresh 10
+
+# Set token limit for warnings (1 million tokens)
+claudelytics live --token-limit 1000000
+
+# Set daily cost limit warnings ($50)
+claudelytics live --cost-limit 50
+
+# Combine options
+claudelytics live --refresh 10 --token-limit 1000000 --cost-limit 50
+
+# Alternative: Use blocks command with live mode
+claudelytics blocks --live
+```
+
+**Live Dashboard Features:**
+- 🔥 **Real-time Burn Rate**: Tokens per minute/hour with cost projections
+- 📊 **Active Session Tracking**: Monitor currently active sessions
+- 💰 **Cost Projections**: Daily and monthly cost estimates based on current rate
+- ⏰ **Time to Limits**: Estimated time until reaching token/cost limits
+- 🚨 **Smart Alerts**: Warnings for high burn rates and approaching limits
+- 🎯 **Activity Level Indicators**: HIGH/MODERATE/NORMAL usage classification
+
+The dashboard automatically updates every 5 seconds (configurable) and provides a comprehensive view of:
+- Current active sessions with duration and last activity
+- Aggregate burn rate across all active sessions
+- Projected daily and monthly usage at current rate
+- Time remaining until configured limits are reached
+- Visual alerts for unusual activity patterns
+
+Press `Ctrl+C` to exit the live dashboard.
+
 ### Custom Configuration
 
 ```bash
@@ -276,14 +377,17 @@ A full-featured terminal interface with:
 - **📊 Overview Tab**: Enhanced summary with quick stats and visual elements
 - **📅 Daily Tab**: Color-coded daily usage with sorting and filtering
 - **📋 Sessions Tab**: Searchable session analytics with real-time filter
+- **💬 Conversations Tab**: View full conversation content with thinking blocks and tool usage (NEW)
 - **📈 Charts Tab**: ASCII charts, cost trends, and token usage visualization
 - **⏰ Billing Tab**: 5-hour billing blocks with cost analysis and pricing cache status
 - **❓ Help Tab**: Comprehensive help with keyboard shortcuts
 
 **Navigation:**
-- Use `1-6` keys or `Tab`/`Shift+Tab` to switch tabs
+- Use `1-7` keys or `Tab`/`Shift+Tab` to switch tabs
 - Use `j/k` or arrow keys to navigate tables
 - Press `/` to search, `s` to sort, `f` to filter by time
+- Press `c` in Sessions tab to view full conversation (NEW)
+- Press `t` to toggle thinking blocks, `u` to toggle tool usage (NEW)
 - Press `r` to refresh, `e` to export, `c` to clear status
 - Press `?` for quick help popup, `q` or `Esc` to quit
 

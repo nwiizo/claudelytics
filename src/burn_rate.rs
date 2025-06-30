@@ -8,7 +8,7 @@ pub struct BurnRateCalculator {
 }
 
 /// Burn rate metrics and projections
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct BurnRateMetrics {
     /// Current burn rate (tokens per hour)
     pub tokens_per_hour: f64,

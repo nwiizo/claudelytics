@@ -42,7 +42,7 @@ pub struct Usage {
 }
 
 /// Aggregated token usage with cost calculation
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,

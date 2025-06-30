@@ -200,7 +200,7 @@ impl Sortable for DailyUsage {
             _ => self.date.cmp(&other.date), // Default to date for unsupported fields
         }
     }
-    
+
     fn default_sort_field() -> SortField {
         SortField::Date
     }
@@ -220,7 +220,7 @@ impl Sortable for SessionUsage {
             SortField::Project => self.project_path.cmp(&other.project_path),
         }
     }
-    
+
     fn default_sort_field() -> SortField {
         SortField::Cost
     }
@@ -249,7 +249,7 @@ impl Sortable for MonthlyUsage {
             } // Default to date
         }
     }
-    
+
     fn default_sort_field() -> SortField {
         SortField::Date
     }

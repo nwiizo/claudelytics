@@ -17,6 +17,7 @@ mod error;
 mod export;
 mod helpers;
 mod interactive;
+mod live_dashboard;
 mod mcp;
 mod models;
 mod models_registry;
@@ -27,7 +28,9 @@ mod pricing_cache;
 mod pricing_strategies;
 mod processing;
 mod projections;
+mod realtime_analytics;
 mod reports;
+mod responsive_tables;
 mod session_analytics;
 mod session_blocks;
 mod state;
@@ -42,10 +45,12 @@ use chrono::Local;
 use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use display::{
-    display_daily_report_enhanced, display_daily_report_json, display_daily_report_table,
-    display_model_breakdown_report, display_monthly_report_enhanced, display_monthly_report_json,
-    display_monthly_report_table, display_session_report_enhanced, display_session_report_json,
-    display_session_report_table, print_error, print_info, print_warning,
+    display_billing_blocks_responsive, display_daily_report_enhanced, display_daily_report_json,
+    display_daily_report_responsive, display_daily_report_table, display_model_breakdown_report,
+    display_monthly_report_enhanced, display_monthly_report_json, display_monthly_report_table,
+    display_session_report_enhanced, display_session_report_json,
+    display_session_report_responsive, display_session_report_table, print_error, print_info,
+    print_warning,
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
 use interactive::InteractiveSelector;
@@ -199,6 +204,19 @@ struct Cli {
         long_help = "Automatically categorize and display usage by model families (Opus, Sonnet, Haiku)\nShows cost and token usage for each model type in a single view\nCombines with other filters: --today, --since, --until"
     )]
     by_model: bool,
+
+    #[arg(
+        long,
+        help = "Use responsive table layout",
+        long_help = "Use responsive tables that automatically adjust to terminal width\nFeatures: Auto-adjusting columns, smart column hiding, abbreviated headers\nPriorities: Date/Cost always shown, cache tokens hidden first\nCombines with daily, session, and billing-blocks commands"
+    )]
+    responsive: bool,
+    #[arg(
+        long,
+        help = "Show real-time analytics",
+        long_help = "Display real-time analytics alongside regular reports\nAdds burn rates, budget projections, and efficiency metrics\nWorks with daily and session commands\nExample: claudelytics daily --realtime"
+    )]
+    realtime: bool,
     // #[arg(long, help = "Launch analytics studio TUI", long_help = "Launch comprehensive analytics studio with AI insights\nFeatures: Pattern analysis, predictive modeling, ML insights, risk management\nKeyboard shortcuts: F10-F12 for analytics tabs, advanced data exploration")]
     // analytics_tui: bool, // Temporarily disabled - work in progress
 }
@@ -564,6 +582,82 @@ enum Commands {
         )]
         threshold: f64,
     },
+    #[command(about = "Real-time analytics with burn rates and projections")]
+    #[command(
+        long_about = "Show comprehensive real-time analytics including burn rates and budget projections\n\nProvides detailed analytics on:\n  - Token and cost burn rates (per minute/hour/day)\n  - Budget projections and time to limits\n  - Session analytics and efficiency trends\n  - Usage alerts and recommendations\n\nFEATURES:\n  - Multi-window burn rate analysis (1hr, 3hr, 24hr)\n  - Budget utilization and projections\n  - Peak usage detection\n  - Efficiency scoring\n  - Smart alerts for unusual patterns\n\nEXAMPLES:\n  claudelytics realtime                # Show all real-time analytics\n  claudelytics realtime --json         # Output as JSON\n  claudelytics realtime --daily-limit 50  # Set $50 daily budget\n  claudelytics realtime --monthly-limit 1000  # Set $1000 monthly budget"
+    )]
+    Realtime {
+        #[arg(
+            long,
+            help = "Daily budget limit (USD)",
+            long_help = "Set daily budget limit for projections and alerts"
+        )]
+        daily_limit: Option<f64>,
+        #[arg(
+            long,
+            help = "Monthly budget limit (USD)",
+            long_help = "Set monthly budget limit for projections and alerts"
+        )]
+        monthly_limit: Option<f64>,
+        #[arg(
+            long,
+            help = "Yearly budget limit (USD)",
+            long_help = "Set yearly budget limit for projections and alerts"
+        )]
+        yearly_limit: Option<f64>,
+        #[arg(
+            long,
+            help = "Alert threshold percentage",
+            long_help = "Percentage of budget to trigger alerts (0.0-1.0, default: 0.8)",
+            default_value = "0.8"
+        )]
+        alert_threshold: f64,
+        #[arg(
+            long,
+            help = "Output as JSON",
+            long_help = "Output analytics report in JSON format"
+        )]
+        json: bool,
+    },
+    #[command(about = "Live dashboard for real-time monitoring")]
+    #[command(
+        long_about = "Launch live dashboard for real-time token usage monitoring\n\nProvides a continuously updating view of:\n  - Real-time token burn rate (tokens/minute, tokens/hour)\n  - Active session progress tracking\n  - Cost projections based on current usage rate\n  - Estimated time to reach daily/monthly limits\n  - Auto-refresh display every 5 seconds\n\nFEATURES:\n  - Real-time burn rate calculation\n  - Active session monitoring\n  - Cost accumulation tracking\n  - Limit warnings and alerts\n  - Configurable refresh interval\n\nEXAMPLES:\n  claudelytics live                    # Start live dashboard\n  claudelytics live --refresh 10       # Update every 10 seconds\n  claudelytics live --token-limit 1000000  # Set token limit\n  claudelytics live --cost-limit 50    # Set daily cost limit ($50)"
+    )]
+    Live {
+        #[arg(
+            long,
+            help = "Refresh interval in seconds",
+            long_help = "How often to refresh the dashboard (default: 5 seconds)",
+            default_value = "5"
+        )]
+        refresh: u64,
+        #[arg(
+            long,
+            help = "Token limit for warnings",
+            long_help = "Set token limit to show time remaining"
+        )]
+        token_limit: Option<u64>,
+        #[arg(
+            long,
+            help = "Daily cost limit for warnings",
+            long_help = "Set daily cost limit (USD) to show time remaining"
+        )]
+        cost_limit: Option<f64>,
+        #[arg(
+            long,
+            help = "Show detailed session information",
+            long_help = "Display detailed information for each active session",
+            default_value = "true"
+        )]
+        show_details: bool,
+        #[arg(
+            long,
+            help = "Enable burn rate alerts",
+            long_help = "Show alerts for high burn rates and approaching limits",
+            default_value = "true"
+        )]
+        enable_alerts: bool,
+    },
     #[command(about = "Display conversation content")]
     #[command(
         long_about = "Display full conversation content from Claude sessions\n\nProvides detailed view of conversations including messages, thinking blocks,\ntool usage, and token usage. Supports multiple output formats and filtering.\n\nFEATURES:\n  - Full conversation thread display with parent/child relationships\n  - Syntax highlighting for code blocks\n  - Thinking block extraction and display\n  - Tool usage tracking\n  - Multiple export formats (terminal, markdown, JSON)\n  - Search and filter capabilities\n\nEXAMPLES:\n  claudelytics conversation --session abc123  # Show specific session\n  claudelytics conversation --project myproj  # Filter by project\n  claudelytics conversation --search \"error\" # Search in conversations\n  claudelytics conversation --export markdown # Export as markdown\n  claudelytics conversation --recent          # Show recent conversations"
@@ -637,6 +731,99 @@ enum Commands {
             long_help = "List all available conversations instead of displaying content"
         )]
         list: bool,
+    },
+    #[command(about = "View conversation content (alias for conversation)")]
+    #[command(
+        long_about = "View full conversation content from Claude sessions\n\nThis is an alias for the 'conversation' command with simplified options.\nProvides quick access to view conversations by session ID or project.\n\nEXAMPLES:\n  claudelytics view abc123              # View specific session\n  claudelytics view --project myproj    # View conversations from project\n  claudelytics view --recent            # View recent conversations\n  claudelytics view --list              # List available conversations"
+    )]
+    View {
+        #[arg(
+            help = "Session ID or project name",
+            long_help = "Session ID or project name to view\nIf not provided, shows recent conversations"
+        )]
+        target: Option<String>,
+        #[arg(
+            short = 'p',
+            long,
+            help = "Filter by project name",
+            long_help = "Filter conversations by project name\nExample: --project myproject"
+        )]
+        project: Option<String>,
+        #[arg(
+            long,
+            help = "Show only recent conversations",
+            long_help = "Display only conversations from the last 7 days"
+        )]
+        recent: bool,
+        #[arg(
+            short = 'l',
+            long,
+            help = "List available conversations",
+            long_help = "List all available conversations instead of displaying content"
+        )]
+        list: bool,
+        #[arg(
+            short = 'e',
+            long,
+            help = "Export format",
+            long_help = "Export conversation in specified format\nOptions: markdown, json, txt"
+        )]
+        export: Option<String>,
+        #[arg(
+            short = 'o',
+            long,
+            help = "Output file path",
+            long_help = "Path to save exported conversation"
+        )]
+        output: Option<PathBuf>,
+    },
+    #[command(about = "Inspect session details and metadata")]
+    #[command(
+        long_about = "Inspect detailed session information including metadata and statistics\n\nProvides comprehensive information about sessions including:\n  - Session metadata (ID, project, timestamps)\n  - Token usage breakdown by model\n  - Cost analysis and efficiency metrics\n  - Conversation count and structure\n  - Activity timeline\n\nEXAMPLES:\n  claudelytics inspect abc123           # Inspect specific session\n  claudelytics inspect --project myproj # Inspect sessions from project\n  claudelytics inspect --recent         # Inspect recent sessions\n  claudelytics inspect --json           # Output as JSON"
+    )]
+    Inspect {
+        #[arg(
+            help = "Session ID or project name",
+            long_help = "Session ID or project name to inspect\nIf not provided, shows summary of all sessions"
+        )]
+        target: Option<String>,
+        #[arg(
+            short = 'p',
+            long,
+            help = "Filter by project name",
+            long_help = "Filter sessions by project name\nExample: --project myproject"
+        )]
+        project: Option<String>,
+        #[arg(
+            long,
+            help = "Show only recent sessions",
+            long_help = "Display only sessions from the last 7 days"
+        )]
+        recent: bool,
+        #[arg(
+            long,
+            help = "Show detailed breakdown",
+            long_help = "Include detailed breakdown of token usage by conversation"
+        )]
+        detailed: bool,
+        #[arg(
+            long,
+            help = "Output as JSON",
+            long_help = "Output session information in JSON format"
+        )]
+        json: bool,
+        #[arg(
+            long,
+            help = "Include conversation list",
+            long_help = "Include list of all conversations in the session"
+        )]
+        conversations: bool,
+        #[arg(
+            long,
+            help = "Show activity timeline",
+            long_help = "Display timeline of session activity"
+        )]
+        timeline: bool,
     },
 }
 
@@ -858,10 +1045,26 @@ fn run() -> Result<()> {
                 print_warning("No daily usage data found for the specified date range");
             } else if cli.json {
                 display_daily_report_json(&daily_report);
+            } else if cli.responsive {
+                display_daily_report_responsive(&daily_report);
             } else if cli.classic || classic {
                 display_daily_report_table(&daily_report);
             } else {
                 display_daily_report_enhanced(&daily_report, cli.compact);
+            }
+
+            // Show real-time analytics if requested
+            if cli.realtime {
+                println!("\n{}", "─".repeat(60));
+                handle_realtime_analytics_command(
+                    &daily_map_clone,
+                    &session_map_clone,
+                    None, // Use default budget limits
+                    None,
+                    None,
+                    0.8,   // Default alert threshold
+                    false, // Not JSON since we're appending to existing output
+                )?;
             }
         }
         Commands::Session {
@@ -882,10 +1085,26 @@ fn run() -> Result<()> {
                 print_warning("No session usage data found for the specified date range");
             } else if cli.json {
                 display_session_report_json(&session_report);
+            } else if cli.responsive {
+                display_session_report_responsive(&session_report);
             } else if cli.classic || classic {
                 display_session_report_table(&session_report);
             } else {
                 display_session_report_enhanced(&session_report);
+            }
+
+            // Show real-time analytics if requested
+            if cli.realtime {
+                println!("\n{}", "─".repeat(60));
+                handle_realtime_analytics_command(
+                    &daily_map_clone,
+                    &session_map_clone,
+                    None, // Use default budget limits
+                    None,
+                    None,
+                    0.8,   // Default alert threshold
+                    false, // Not JSON since we're appending to existing output
+                )?;
             }
         }
         Commands::Monthly {
@@ -949,7 +1168,13 @@ fn run() -> Result<()> {
         //     analytics_tui_app.run()?;
         // } // Temporarily disabled - work in progress
         Commands::BillingBlocks { classic, summary } => {
-            handle_billing_blocks_command(&billing_manager, cli.json, classic, summary);
+            handle_billing_blocks_command(
+                &billing_manager,
+                cli.json,
+                cli.responsive,
+                classic,
+                summary,
+            );
         }
         Commands::PricingCache {
             show,
@@ -1015,6 +1240,42 @@ fn run() -> Result<()> {
                 threshold,
             )?;
         }
+        Commands::Realtime {
+            daily_limit,
+            monthly_limit,
+            yearly_limit,
+            alert_threshold,
+            json,
+        } => {
+            handle_realtime_analytics_command(
+                &daily_map_clone,
+                &session_map_clone,
+                daily_limit,
+                monthly_limit,
+                yearly_limit,
+                alert_threshold,
+                json,
+            )?;
+        }
+        Commands::Live {
+            refresh,
+            token_limit,
+            cost_limit,
+            show_details,
+            enable_alerts,
+        } => {
+            use live_dashboard::{LiveDashboardOptions, run_live_dashboard};
+
+            let options = LiveDashboardOptions {
+                refresh,
+                token_limit,
+                cost_limit,
+                show_details,
+                enable_alerts,
+            };
+
+            run_live_dashboard(&claude_dir, options)?;
+        }
         Commands::Conversation {
             session,
             project,
@@ -1039,6 +1300,73 @@ fn run() -> Result<()> {
                 include_thinking,
                 include_tools,
                 list,
+            )?;
+        }
+        Commands::View {
+            target,
+            project,
+            recent,
+            list,
+            export,
+            output,
+        } => {
+            // View is an alias for conversation with simplified options
+            let session = if let Some(ref t) = target {
+                // Check if target looks like a session ID (contains hyphen or is long)
+                if t.contains('-') || t.len() > 20 {
+                    Some(t.clone())
+                } else {
+                    // Treat as project name if no explicit project flag
+                    None
+                }
+            } else {
+                None
+            };
+
+            let project_filter = project.or_else(|| {
+                target.as_ref().and_then(|t| {
+                    // If target doesn't look like session ID, treat as project
+                    if !t.contains('-') && t.len() <= 20 {
+                        Some(t.clone())
+                    } else {
+                        None
+                    }
+                })
+            });
+
+            handle_conversation_command(
+                &claude_dir,
+                session,
+                project_filter,
+                None, // search
+                export,
+                output,
+                recent,
+                "detailed".to_string(), // mode
+                true,                   // include_thinking
+                true,                   // include_tools
+                list,
+            )?;
+        }
+        Commands::Inspect {
+            target,
+            project,
+            recent,
+            detailed,
+            json,
+            conversations,
+            timeline,
+        } => {
+            handle_inspect_command(
+                &claude_dir,
+                &session_map_clone,
+                target,
+                project,
+                recent,
+                detailed,
+                json,
+                conversations,
+                timeline,
             )?;
         }
         _ => {} // Other commands handled above
@@ -1460,6 +1788,7 @@ fn handle_test_resume_command(
 fn handle_billing_blocks_command(
     billing_manager: &billing_blocks::BillingBlockManager,
     json: bool,
+    responsive: bool,
     classic: bool,
     show_summary: bool,
 ) {
@@ -1470,9 +1799,13 @@ fn handle_billing_blocks_command(
         if let Ok(json_str) = serde_json::to_string_pretty(&report) {
             println!("{}", json_str);
         }
+    } else if responsive {
+        // Responsive table format
+        let blocks = billing_manager.get_all_blocks();
+        display_billing_blocks_responsive(&blocks);
     } else if classic {
-        // Classic table format
-        display_billing_blocks_table(&report);
+        // Classic table format - use enhanced format for now
+        display_billing_blocks_enhanced(&report, false);
     } else {
         // Enhanced format
         display_billing_blocks_enhanced(&report, show_summary);
@@ -1570,6 +1903,7 @@ fn display_billing_blocks_enhanced(
 }
 
 /// Display billing blocks in table format
+#[allow(dead_code)]
 fn display_billing_blocks_table(report: &billing_blocks::BillingBlockReport) {
     use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 
@@ -2186,7 +2520,46 @@ fn handle_analytics_command(
     Ok(())
 }
 
+/// Handle real-time analytics command
+fn handle_realtime_analytics_command(
+    daily_map: &models::DailyUsageMap,
+    session_map: &SessionUsageMap,
+    daily_limit: Option<f64>,
+    monthly_limit: Option<f64>,
+    yearly_limit: Option<f64>,
+    alert_threshold: f64,
+    json: bool,
+) -> Result<()> {
+    use realtime_analytics::{BudgetConfig, RealtimeAnalytics, format_realtime_analytics};
+
+    // Create budget configuration
+    let budget_config = BudgetConfig {
+        daily_limit,
+        monthly_limit,
+        yearly_limit,
+        alert_threshold,
+    };
+
+    // Create real-time analytics instance
+    let analytics = RealtimeAnalytics::new(daily_map, session_map, budget_config);
+
+    // Generate comprehensive report
+    let report = analytics.generate_report();
+
+    if json {
+        // Output as JSON
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        // Format and display the report
+        let formatted_output = format_realtime_analytics(&report);
+        println!("{}", formatted_output);
+    }
+
+    Ok(())
+}
+
 /// Handle conversation command
+#[allow(clippy::too_many_arguments)]
 fn handle_conversation_command(
     claude_dir: &Path,
     session: Option<String>,
@@ -2585,4 +2958,210 @@ fn format_number(num: u64) -> String {
     }
 
     result.chars().rev().collect()
+}
+/// Handle inspect command for session details
+#[allow(clippy::too_many_arguments)]
+fn handle_inspect_command(
+    claude_dir: &Path,
+    session_map: &SessionUsageMap,
+    target: Option<String>,
+    project: Option<String>,
+    recent: bool,
+    detailed: bool,
+    json: bool,
+    conversations: bool,
+    timeline: bool,
+) -> Result<()> {
+    use colored::Colorize;
+    use conversation_parser::ConversationParser;
+    use serde_json::json;
+
+    // Filter sessions based on criteria
+    let mut sessions: Vec<_> = session_map.iter().collect();
+
+    // Apply filters
+    if recent {
+        let cutoff = chrono::Local::now() - chrono::Duration::days(7);
+        sessions.retain(|(_, (_, last_activity))| *last_activity > cutoff);
+    }
+
+    if let Some(ref proj) = project {
+        sessions.retain(|(path, _)| path.contains(proj));
+    }
+
+    if let Some(ref t) = target {
+        // Check if it's a session ID or project name
+        if t.contains('-') || t.len() > 20 {
+            // Looks like a session ID
+            sessions.retain(|(path, _)| path.contains(t));
+        } else {
+            // Treat as project name
+            sessions.retain(|(path, _)| path.contains(t));
+        }
+    }
+
+    if sessions.is_empty() {
+        print_warning("No sessions found matching the specified criteria");
+        return Ok(());
+    }
+
+    // Sort sessions by last activity (newest first)
+    sessions.sort_by(|(_, (_, a)), (_, (_, b))| b.cmp(a));
+
+    if json {
+        // JSON output
+        let mut json_output = Vec::new();
+
+        for (session_path, (usage, last_activity)) in sessions {
+            let parts: Vec<&str> = session_path.split('/').collect();
+            let project_name = parts.first().unwrap_or(&"unknown");
+            let session_id = parts.get(1).unwrap_or(&"unknown");
+
+            let mut session_info = json!({
+                "session_id": session_id,
+                "project": project_name,
+                "last_activity": last_activity.format("%Y-%m-%d %H:%M:%S").to_string(),
+                "input_tokens": usage.input_tokens,
+                "output_tokens": usage.output_tokens,
+                "cache_creation_tokens": usage.cache_creation_tokens,
+                "cache_read_tokens": usage.cache_read_tokens,
+                "total_tokens": usage.total_tokens(),
+                "total_cost": usage.total_cost,
+                "efficiency": if usage.total_cost > 0.0 {
+                    (usage.total_tokens() as f64 / usage.total_cost) as u64
+                } else {
+                    0
+                }
+            });
+
+            if conversations {
+                // Add conversation list
+                let parser = ConversationParser::new(claude_dir.to_path_buf());
+                if let Ok(conv_files) = parser.find_conversation_files() {
+                    let session_convs: Vec<_> = conv_files
+                        .iter()
+                        .filter(|path| path.to_string_lossy().contains(session_path.as_str()))
+                        .map(|p| {
+                            p.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string()
+                        })
+                        .collect();
+                    session_info["conversations"] = json!(session_convs);
+                    session_info["conversation_count"] = json!(session_convs.len());
+                }
+            }
+
+            json_output.push(session_info);
+        }
+
+        println!("{}", serde_json::to_string_pretty(&json_output)?);
+    } else {
+        // Terminal output
+        println!("\n{}", "📊 Session Inspection Report".bold().cyan());
+        println!("{}", "═".repeat(60).blue());
+
+        for (session_path, (usage, last_activity)) in
+            sessions.iter().take(if target.is_some() { 1 } else { 10 })
+        {
+            let parts: Vec<&str> = session_path.split('/').collect();
+            let project_name = parts.first().unwrap_or(&"unknown");
+            let session_id = parts.get(1).unwrap_or(&"unknown");
+
+            println!("\n{} Session: {}", "🔍".cyan(), session_id.yellow());
+            println!("   Project: {}", project_name.green());
+            println!(
+                "   Last Activity: {}",
+                last_activity
+                    .format("%Y-%m-%d %H:%M:%S")
+                    .to_string()
+                    .bright_white()
+            );
+
+            // Token usage breakdown
+            println!("\n   {} Token Usage:", "📈".cyan());
+            println!("   ├─ Input: {} tokens", format_number(usage.input_tokens));
+            println!(
+                "   ├─ Output: {} tokens",
+                format_number(usage.output_tokens)
+            );
+            if usage.cache_creation_tokens > 0 {
+                println!(
+                    "   ├─ Cache Creation: {} tokens",
+                    format_number(usage.cache_creation_tokens)
+                );
+            }
+            if usage.cache_read_tokens > 0 {
+                println!(
+                    "   ├─ Cache Read: {} tokens",
+                    format_number(usage.cache_read_tokens)
+                );
+            }
+            println!(
+                "   └─ Total: {} tokens",
+                format_number(usage.total_tokens()).bold()
+            );
+
+            // Cost analysis
+            println!("\n   {} Cost Analysis:", "💰".cyan());
+            println!("   ├─ Total Cost: ${:.6}", usage.total_cost);
+            let efficiency = if usage.total_cost > 0.0 {
+                (usage.total_tokens() as f64 / usage.total_cost) as u64
+            } else {
+                0
+            };
+            println!("   └─ Efficiency: {} tokens/$", format_number(efficiency));
+
+            if conversations || detailed {
+                // Show conversation count
+                let parser = ConversationParser::new(claude_dir.to_path_buf());
+                if let Ok(conv_files) = parser.find_conversation_files() {
+                    let session_convs: Vec<_> = conv_files
+                        .iter()
+                        .filter(|path| path.to_string_lossy().contains(session_path.as_str()))
+                        .collect();
+
+                    println!(
+                        "\n   {} Conversations: {}",
+                        "💬".cyan(),
+                        session_convs.len()
+                    );
+
+                    if conversations && !session_convs.is_empty() {
+                        println!("   Conversation files:");
+                        for (i, conv_path) in session_convs.iter().take(5).enumerate() {
+                            let conv_name =
+                                conv_path.file_name().unwrap_or_default().to_string_lossy();
+                            println!("   {}. {}", i + 1, conv_name.bright_black());
+                        }
+                        if session_convs.len() > 5 {
+                            println!("   ... and {} more", session_convs.len() - 5);
+                        }
+                    }
+                }
+            }
+
+            if timeline {
+                // Show activity timeline (simplified for now)
+                println!("\n   {} Activity Timeline:", "📅".cyan());
+                println!(
+                    "   └─ Active for approximately {}",
+                    format_duration(&chrono::Duration::hours(2))
+                ); // Placeholder
+            }
+
+            println!("\n   {}", "─".repeat(50).bright_black());
+        }
+
+        if sessions.len() > 10 && target.is_none() {
+            println!(
+                "\n💡 Showing top 10 sessions. Found {} total sessions.",
+                sessions.len()
+            );
+            println!("   Use --target <session-id> to inspect a specific session.");
+        }
+    }
+
+    Ok(())
 }

@@ -79,7 +79,11 @@ impl ProjectionCalculator {
     }
 
     /// Common projection calculation logic
-    fn calculate_projection_from_points(&self, data_points: &[DataPoint], limit: Option<f64>) -> UsageProjection {
+    fn calculate_projection_from_points(
+        &self,
+        data_points: &[DataPoint],
+        limit: Option<f64>,
+    ) -> UsageProjection {
         // Calculate averages
         let daily_average = self.calculate_daily_average(data_points);
         let weekly_average = self.calculate_weekly_average(data_points);
@@ -459,7 +463,7 @@ mod tests {
     fn test_period_average_calculation() {
         let calculator = ProjectionCalculator::new();
         let mut data_points = vec![];
-        
+
         // Add 10 days of data
         for i in 0..10 {
             data_points.push(DataPoint {
@@ -467,12 +471,12 @@ mod tests {
                 value: 10.0,
             });
         }
-        
+
         // Test period averages
         let daily_avg = calculator.calculate_daily_average(&data_points);
         let weekly_avg = calculator.calculate_weekly_average(&data_points);
         let monthly_avg = calculator.calculate_monthly_average(&data_points);
-        
+
         assert_eq!(daily_avg, 10.0);
         assert_eq!(weekly_avg, 70.0); // 7 days * 10.0
         assert_eq!(monthly_avg, 300.0); // daily_avg (10.0) * 30 days

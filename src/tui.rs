@@ -12,6 +12,8 @@
 
 use crate::billing_blocks::BillingBlockManager;
 use crate::claude_sessions::ClaudeSessionParser;
+use crate::conversation_display::{ConversationDisplay, DisplayMode};
+use crate::conversation_parser::{Conversation, ConversationParser, MessageContentBlock};
 use crate::models::{
     ClaudeMessage, ClaudeSession, Command, CommandAction, ContentPart, DailyReport, MessageContent,
     SessionReport, TokenUsage,
@@ -49,6 +51,7 @@ enum Tab {
     Overview,
     Daily,
     Sessions,
+    Conversations,
     Charts,
     BillingBlocks,
     Resume,
@@ -63,6 +66,7 @@ enum AppMode {
     Search,
     Visual,
     ExportDialog,
+    ConversationView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -95,6 +99,8 @@ struct ResumeSession {
 enum ExportFormat {
     Csv,
     Json,
+    Markdown,
+    Text,
 }
 
 #[derive(Debug)]
@@ -158,6 +164,30 @@ pub struct TuiApp {
     export_dialog_state: ExportDialogState,
     // Visual effects manager
     visual_effects: VisualEffectsManager,
+    // Conversation viewing
+    conversation_sessions: Vec<ClaudeSession>,
+    conversation_table_state: TableState,
+    conversation_scroll_state: ScrollbarState,
+    selected_conversation: Option<ConversationView>,
+    conversation_search_query: String,
+    conversation_search_mode: bool,
+    show_thinking_blocks: bool,
+    show_tool_usage: bool,
+    // Export dialog state
+    previous_mode: Option<AppMode>,
+}
+
+#[derive(Debug, Clone)]
+struct ConversationView {
+    session: ClaudeSession,
+    messages: Vec<ClaudeMessage>,
+    scroll_position: usize,
+    message_table_state: TableState,
+    filtered_messages: Vec<ClaudeMessage>,
+    /// Full conversation data from advanced parser
+    conversation: Option<Conversation>,
+    /// Display formatter for conversation
+    display: ConversationDisplay,
 }
 
 #[derive(Debug, Clone)]
@@ -246,6 +276,15 @@ impl TuiApp {
                 error_message: None,
             },
             visual_effects: VisualEffectsManager::new(),
+            conversation_sessions: Vec::new(),
+            conversation_table_state: TableState::default(),
+            conversation_scroll_state: ScrollbarState::new(0),
+            selected_conversation: None,
+            conversation_search_query: String::new(),
+            conversation_search_mode: false,
+            show_thinking_blocks: false,
+            show_tool_usage: true,
+            previous_mode: None,
         };
 
         // Apply initial filters and sorting
@@ -293,9 +332,11 @@ impl TuiApp {
             0 => Tab::Overview,
             1 => Tab::Daily,
             2 => Tab::Sessions,
-            3 => Tab::Charts,
-            4 => Tab::Resume,
-            5 => Tab::Help,
+            3 => Tab::Conversations,
+            4 => Tab::Charts,
+            5 => Tab::BillingBlocks,
+            6 => Tab::Resume,
+            7 => Tab::Help,
             _ => Tab::Overview,
         };
     }
@@ -485,24 +526,38 @@ impl TuiApp {
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Charts".to_string(),
-                description: "Go to charts tab".to_string(),
+                name: "Switch to Conversations".to_string(),
+                description: "Go to conversations tab".to_string(),
                 shortcut: Some("4".to_string()),
                 action: CommandAction::SwitchTab(3),
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Resume".to_string(),
-                description: "Go to resume tab".to_string(),
+                name: "Switch to Charts".to_string(),
+                description: "Go to charts tab".to_string(),
                 shortcut: Some("5".to_string()),
                 action: CommandAction::SwitchTab(4),
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Help".to_string(),
-                description: "Go to help tab".to_string(),
+                name: "Switch to Billing".to_string(),
+                description: "Go to billing blocks tab".to_string(),
                 shortcut: Some("6".to_string()),
                 action: CommandAction::SwitchTab(5),
+                category: "Navigation".to_string(),
+            },
+            Command {
+                name: "Switch to Resume".to_string(),
+                description: "Go to resume tab".to_string(),
+                shortcut: Some("7".to_string()),
+                action: CommandAction::SwitchTab(6),
+                category: "Navigation".to_string(),
+            },
+            Command {
+                name: "Switch to Help".to_string(),
+                description: "Go to help tab".to_string(),
+                shortcut: Some("8".to_string()),
+                action: CommandAction::SwitchTab(7),
                 category: "Navigation".to_string(),
             },
             Command {
@@ -594,6 +649,13 @@ impl TuiApp {
                                         AppMode::ExportDialog => {
                                             self.handle_export_dialog_input(key.code)?;
                                         }
+                                        AppMode::ConversationView => {
+                                            if self.conversation_search_mode {
+                                                self.handle_conversation_search_input(key.code)?;
+                                            } else {
+                                                self.handle_conversation_view_input(key.code)?;
+                                            }
+                                        }
                                         AppMode::Normal => {
                                             if self.search_mode {
                                                 self.handle_search_input(key.code)?;
@@ -666,11 +728,24 @@ impl TuiApp {
                     .add_toast(ToastNotification::info("Switched to Sessions".to_string()));
             }
             KeyCode::Char('4') => {
+                self.current_tab = Tab::Conversations;
+                self.visual_effects.add_toast(ToastNotification::info(
+                    "Switched to Conversations".to_string(),
+                ));
+                self.load_conversation_sessions();
+            }
+            KeyCode::Char('5') => {
                 self.current_tab = Tab::Charts;
                 self.visual_effects
                     .add_toast(ToastNotification::info("Switched to Charts".to_string()));
             }
-            KeyCode::Char('5') => {
+            KeyCode::Char('6') => {
+                self.current_tab = Tab::BillingBlocks;
+                self.visual_effects.add_toast(ToastNotification::info(
+                    "Switched to Billing Blocks".to_string(),
+                ));
+            }
+            KeyCode::Char('7') => {
                 self.current_tab = Tab::Resume;
                 self.visual_effects.add_toast(ToastNotification::info(
                     "Switched to Resume Tab".to_string(),
@@ -678,7 +753,7 @@ impl TuiApp {
                 // Auto-load removed to prevent hanging
                 // Users can press 'r' to manually load sessions
             }
-            KeyCode::Char('6') | KeyCode::Char('h') => {
+            KeyCode::Char('8') | KeyCode::Char('h') => {
                 self.current_tab = Tab::Help;
                 self.visual_effects
                     .add_toast(ToastNotification::info("Showing Help".to_string()));
@@ -741,8 +816,13 @@ impl TuiApp {
                 self.jump_to_line_end();
             }
             KeyCode::Char('v') => {
-                // Enter visual mode
-                self.toggle_visual_mode();
+                if self.current_tab == Tab::Conversations {
+                    // View full conversation
+                    self.view_selected_conversation();
+                } else {
+                    // Enter visual mode
+                    self.toggle_visual_mode();
+                }
             }
             KeyCode::Char('/') => {
                 self.search_mode = true;
@@ -776,7 +856,12 @@ impl TuiApp {
                 self.cycle_time_filter();
             }
             KeyCode::Char('c') => {
-                self.status_message = None;
+                if self.current_tab == Tab::Sessions {
+                    // View conversation from selected session
+                    self.view_session_conversation();
+                } else {
+                    self.status_message = None;
+                }
             }
             KeyCode::Char('e') => {
                 self.open_export_dialog();
@@ -1143,17 +1228,43 @@ impl TuiApp {
         );
     }
 
+    fn open_conversation_export_dialog(&mut self) {
+        // Store previous mode to return to conversation view after export
+        self.previous_mode = Some(AppMode::ConversationView);
+        self.current_mode = AppMode::ExportDialog;
+        self.export_dialog_state.selected_format = ExportFormat::Markdown;
+        self.export_dialog_state.show_success_message = false;
+        self.export_dialog_state.error_message = None;
+        self.status_message = Some(
+            "📁 Export Conversation: Use arrows to select format, Enter to export, Esc to cancel"
+                .to_string(),
+        );
+    }
+
     fn handle_export_dialog_input(&mut self, key: KeyCode) -> Result<()> {
         match key {
             KeyCode::Esc => {
-                self.current_mode = AppMode::Normal;
+                // Return to previous mode if available, otherwise Normal
+                self.current_mode = self.previous_mode.unwrap_or(AppMode::Normal);
+                self.previous_mode = None;
                 self.status_message = None;
             }
-            KeyCode::Left | KeyCode::Right | KeyCode::Tab => {
+            KeyCode::Left => {
+                self.export_dialog_state.selected_format =
+                    match self.export_dialog_state.selected_format {
+                        ExportFormat::Csv => ExportFormat::Text,
+                        ExportFormat::Json => ExportFormat::Csv,
+                        ExportFormat::Markdown => ExportFormat::Json,
+                        ExportFormat::Text => ExportFormat::Markdown,
+                    };
+            }
+            KeyCode::Right | KeyCode::Tab => {
                 self.export_dialog_state.selected_format =
                     match self.export_dialog_state.selected_format {
                         ExportFormat::Csv => ExportFormat::Json,
-                        ExportFormat::Json => ExportFormat::Csv,
+                        ExportFormat::Json => ExportFormat::Markdown,
+                        ExportFormat::Markdown => ExportFormat::Text,
+                        ExportFormat::Text => ExportFormat::Csv,
                     };
             }
             KeyCode::Enter => {
@@ -1166,6 +1277,14 @@ impl TuiApp {
 
     fn execute_export(&mut self) -> Result<()> {
         let format = self.export_dialog_state.selected_format;
+
+        // Check if we're exporting a conversation
+        if self.previous_mode == Some(AppMode::ConversationView)
+            && self.selected_conversation.is_some()
+        {
+            return self.export_conversation(format);
+        }
+
         let data_type = match self.current_tab {
             Tab::Daily => "daily",
             Tab::Sessions => "sessions",
@@ -1181,6 +1300,13 @@ impl TuiApp {
         match format {
             ExportFormat::Csv => self.export_to_csv(data_type),
             ExportFormat::Json => self.export_to_json(data_type),
+            ExportFormat::Markdown | ExportFormat::Text => {
+                self.export_dialog_state.error_message = Some(format!(
+                    "{:?} format only available for conversations",
+                    format
+                ));
+                Ok(())
+            }
         }
     }
 
@@ -1300,6 +1426,177 @@ impl TuiApp {
                 block.usage.total_tokens(),
                 block.usage.total_cost
             )?;
+        }
+
+        Ok(output)
+    }
+
+    fn export_conversation(&mut self, format: ExportFormat) -> Result<()> {
+        let conversation_view = self
+            .selected_conversation
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No conversation selected"))?;
+
+        let content = match format {
+            ExportFormat::Markdown => self.export_conversation_as_markdown(conversation_view)?,
+            ExportFormat::Json => self.export_conversation_as_json(conversation_view)?,
+            ExportFormat::Text => self.export_conversation_as_text(conversation_view)?,
+            ExportFormat::Csv => {
+                self.export_dialog_state.error_message =
+                    Some("CSV format not supported for conversations".to_string());
+                return Ok(());
+            }
+        };
+
+        // Copy to clipboard
+        self.copy_to_clipboard(&content)?;
+
+        // Show success message
+        self.export_dialog_state.show_success_message = true;
+        self.export_dialog_state.success_message = format!(
+            "✅ Conversation exported as {} and copied to clipboard!",
+            match format {
+                ExportFormat::Markdown => "Markdown",
+                ExportFormat::Json => "JSON",
+                ExportFormat::Text => "Text",
+                ExportFormat::Csv => "CSV",
+            }
+        );
+
+        // Return to conversation view after a short delay
+        self.current_mode = AppMode::ConversationView;
+        self.previous_mode = None;
+
+        Ok(())
+    }
+
+    fn export_conversation_as_markdown(
+        &self,
+        conversation_view: &ConversationView,
+    ) -> Result<String> {
+        let mut output = String::new();
+
+        // Add session header
+        output.push_str("# Claude Conversation\n\n");
+        output.push_str(&format!(
+            "**Session ID**: {}\n",
+            conversation_view.session.session_id
+        ));
+        output.push_str(&format!(
+            "**Project**: {}\n",
+            conversation_view.session.project_path
+        ));
+        output.push_str(&format!(
+            "**Summary**: {}\n\n",
+            conversation_view.session.summary
+        ));
+
+        // If we have the full conversation data, use the display formatter
+        if let Some(ref conversation) = conversation_view.conversation {
+            let display = ConversationDisplay::new().with_mode(DisplayMode::Detailed);
+            output.push_str(&display.format_conversation(conversation));
+        } else {
+            // Fallback to basic message export
+            output.push_str("## Messages\n\n");
+            for message in &conversation_view.messages {
+                output.push_str(&format!(
+                    "### {} ({})\n\n",
+                    message.message.role,
+                    message.timestamp.format("%Y-%m-%d %H:%M:%S")
+                ));
+
+                for part in &message.message.content {
+                    if let Some(text) = &part.text {
+                        output.push_str(&format!("{}\n\n", text));
+                    }
+                }
+            }
+        }
+
+        Ok(output)
+    }
+
+    fn export_conversation_as_json(&self, conversation_view: &ConversationView) -> Result<String> {
+        // Export the full conversation data if available
+        if let Some(ref conversation) = conversation_view.conversation {
+            Ok(serde_json::to_string_pretty(conversation)?)
+        } else {
+            // Fallback to exporting just the messages
+            Ok(serde_json::to_string_pretty(&conversation_view.messages)?)
+        }
+    }
+
+    fn export_conversation_as_text(&self, conversation_view: &ConversationView) -> Result<String> {
+        let mut output = String::new();
+
+        // Header
+        output.push_str("Claude Conversation\n");
+        output.push_str(&format!("{}\n\n", "=".repeat(50)));
+        output.push_str(&format!(
+            "Session ID: {}\n",
+            conversation_view.session.session_id
+        ));
+        output.push_str(&format!(
+            "Project: {}\n",
+            conversation_view.session.project_path
+        ));
+        output.push_str(&format!("Summary: {}\n", conversation_view.session.summary));
+        output.push_str(&format!("{}\n\n", "=".repeat(50)));
+
+        // If we have the full conversation data, use a simple text format
+        if let Some(ref conversation) = conversation_view.conversation {
+            for message in &conversation.messages {
+                output.push_str(&format!(
+                    "[{}] {} - {}\n",
+                    message.timestamp.format("%H:%M:%S"),
+                    message.role.to_uppercase(),
+                    message.model.as_ref().unwrap_or(&String::from("unknown"))
+                ));
+
+                for block in &message.content {
+                    match block {
+                        MessageContentBlock::Text { content_type, text } => {
+                            if content_type == "thinking" && self.show_thinking_blocks {
+                                output.push_str(&format!("💭 THINKING:\n{}\n\n", text));
+                            } else if content_type != "thinking" {
+                                output.push_str(&format!("{}\n\n", text));
+                            }
+                        }
+                        MessageContentBlock::ToolUse { name, input, .. } => {
+                            if self.show_tool_usage {
+                                output.push_str(&format!("🔧 TOOL USE: {}\n", name));
+                                if let Ok(formatted) = serde_json::to_string_pretty(input) {
+                                    output.push_str(&format!("{}\n\n", formatted));
+                                }
+                            }
+                        }
+                        MessageContentBlock::ToolResult { content, .. } => {
+                            if self.show_tool_usage {
+                                output.push_str(&format!("✅ TOOL RESULT:\n{}\n\n", content));
+                            }
+                        }
+                    }
+                }
+
+                output.push_str(&format!("{}\n", "-".repeat(50)));
+            }
+        } else {
+            // Fallback to basic message export
+            for message in &conversation_view.messages {
+                output.push_str(&format!(
+                    "[{}] {}\n",
+                    message.timestamp.format("%H:%M:%S"),
+                    message.message.role.to_uppercase()
+                ));
+
+                for part in &message.message.content {
+                    if let Some(text) = &part.text {
+                        output.push_str(&format!("{}\n", text));
+                    }
+                }
+
+                output.push_str(&format!("{}\n", "-".repeat(50)));
+            }
         }
 
         Ok(output)
@@ -1636,6 +1933,287 @@ impl TuiApp {
         }
     }
 
+    fn load_conversation_sessions(&mut self) {
+        // Load sessions that have conversation data
+        let parser = ClaudeSessionParser::new(None);
+        match parser.get_recent_sessions(50) {
+            Ok(sessions) => {
+                self.conversation_sessions = sessions;
+                if !self.conversation_sessions.is_empty() {
+                    self.conversation_table_state.select(Some(0));
+                }
+                self.conversation_scroll_state =
+                    ScrollbarState::new(self.conversation_sessions.len());
+                self.status_message = Some(format!(
+                    "📋 Loaded {} conversations",
+                    self.conversation_sessions.len()
+                ));
+            }
+            Err(e) => {
+                self.status_message = Some(format!("❌ Failed to load conversations: {}", e));
+            }
+        }
+    }
+
+    fn view_selected_conversation(&mut self) {
+        if let Some(selected) = self.conversation_table_state.selected() {
+            if let Some(session) = self.conversation_sessions.get(selected).cloned() {
+                self.load_conversation_messages(session);
+            }
+        }
+    }
+
+    fn view_session_conversation(&mut self) {
+        if let Some(selected) = self.session_table_state.selected() {
+            if let Some(session_report) = self.session_report.sessions.get(selected) {
+                // Find the corresponding ClaudeSession
+                let parser = ClaudeSessionParser::new(None);
+                match parser.parse_all_sessions() {
+                    Ok(sessions) => {
+                        for session in sessions {
+                            if session.session_id == session_report.session_id
+                                && session.project_path == session_report.project_path
+                            {
+                                self.load_conversation_messages(session);
+                                self.current_tab = Tab::Conversations;
+                                self.current_mode = AppMode::ConversationView;
+                                return;
+                            }
+                        }
+                        self.status_message = Some(
+                            "❌ Could not find conversation data for this session".to_string(),
+                        );
+                    }
+                    Err(e) => {
+                        self.status_message =
+                            Some(format!("❌ Failed to load conversation: {}", e));
+                    }
+                }
+            }
+        }
+    }
+
+    fn load_conversation_messages(&mut self, session: ClaudeSession) {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        // First, try to parse with the advanced conversation parser
+        let parser = ConversationParser::new(session.file_path.parent().unwrap().to_path_buf());
+        let conversation = match parser.parse_conversation(&session.file_path) {
+            Ok(conv) => Some(conv),
+            Err(e) => {
+                eprintln!("Failed to parse conversation with advanced parser: {}", e);
+                None
+            }
+        };
+
+        // Fallback to basic parsing for compatibility
+        match File::open(&session.file_path) {
+            Ok(file) => {
+                let reader = BufReader::new(file);
+                let mut messages = Vec::new();
+
+                // Skip first line (summary)
+                for (i, line) in reader.lines().enumerate() {
+                    if i == 0 {
+                        continue;
+                    }
+
+                    if let Ok(line_content) = line {
+                        if let Ok(message) = serde_json::from_str::<ClaudeMessage>(&line_content) {
+                            messages.push(message);
+                        }
+                    }
+                }
+
+                let filtered_messages = messages.clone();
+                let mut message_table_state = TableState::default();
+                if !messages.is_empty() {
+                    message_table_state.select(Some(0));
+                }
+
+                // Create conversation display formatter
+                let mut display = ConversationDisplay::new();
+                display.set_mode(DisplayMode::Detailed);
+
+                self.selected_conversation = Some(ConversationView {
+                    session,
+                    messages,
+                    scroll_position: 0,
+                    message_table_state,
+                    filtered_messages,
+                    conversation,
+                    display,
+                });
+
+                self.current_mode = AppMode::ConversationView;
+                self.status_message = Some(
+                    "💬 Viewing conversation (Esc to return, / to search, e to export)".to_string(),
+                );
+            }
+            Err(e) => {
+                self.status_message = Some(format!("❌ Failed to open conversation: {}", e));
+            }
+        }
+    }
+
+    fn handle_conversation_view_input(&mut self, key: KeyCode) -> Result<()> {
+        match key {
+            KeyCode::Esc => {
+                self.current_mode = AppMode::Normal;
+                self.selected_conversation = None;
+                self.conversation_search_mode = false;
+                self.conversation_search_query.clear();
+            }
+            KeyCode::Char('/') => {
+                self.conversation_search_mode = true;
+                self.conversation_search_query.clear();
+                self.status_message =
+                    Some("🔍 Search in conversation: (Esc to cancel)".to_string());
+            }
+            KeyCode::Char('t') => {
+                self.show_thinking_blocks = !self.show_thinking_blocks;
+                self.filter_conversation_messages();
+                self.status_message = Some(format!(
+                    "Thinking blocks: {}",
+                    if self.show_thinking_blocks {
+                        "shown"
+                    } else {
+                        "hidden"
+                    }
+                ));
+            }
+            KeyCode::Char('u') => {
+                self.show_tool_usage = !self.show_tool_usage;
+                self.filter_conversation_messages();
+                self.status_message = Some(format!(
+                    "Tool usage: {}",
+                    if self.show_tool_usage {
+                        "shown"
+                    } else {
+                        "hidden"
+                    }
+                ));
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Some(ref mut conv) = self.selected_conversation {
+                    if let Some(selected) = conv.message_table_state.selected() {
+                        if selected < conv.filtered_messages.len() - 1 {
+                            conv.message_table_state.select(Some(selected + 1));
+                        }
+                    }
+                }
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Some(ref mut conv) = self.selected_conversation {
+                    if let Some(selected) = conv.message_table_state.selected() {
+                        if selected > 0 {
+                            conv.message_table_state.select(Some(selected - 1));
+                        }
+                    }
+                }
+            }
+            KeyCode::PageDown => {
+                if let Some(ref mut conv) = self.selected_conversation {
+                    if let Some(selected) = conv.message_table_state.selected() {
+                        let new_pos = (selected + 10).min(conv.filtered_messages.len() - 1);
+                        conv.message_table_state.select(Some(new_pos));
+                    }
+                }
+            }
+            KeyCode::PageUp => {
+                if let Some(ref mut conv) = self.selected_conversation {
+                    if let Some(selected) = conv.message_table_state.selected() {
+                        let new_pos = selected.saturating_sub(10);
+                        conv.message_table_state.select(Some(new_pos));
+                    }
+                }
+            }
+            KeyCode::Char('e') => {
+                self.open_conversation_export_dialog();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn filter_conversation_messages(&mut self) {
+        if let Some(ref mut conv) = self.selected_conversation {
+            conv.filtered_messages = conv
+                .messages
+                .iter()
+                .filter(|msg| {
+                    // Filter by search query
+                    let matches_search = if self.conversation_search_query.is_empty() {
+                        true
+                    } else {
+                        let query = self.conversation_search_query.to_lowercase();
+                        msg.message.content.iter().any(|part| {
+                            part.text
+                                .as_ref()
+                                .is_some_and(|text| text.to_lowercase().contains(&query))
+                        })
+                    };
+
+                    // Filter thinking blocks and tool usage
+                    let is_thinking = msg
+                        .message
+                        .content
+                        .iter()
+                        .any(|part| part.content_type == "thinking");
+
+                    let is_tool = msg.message.content.iter().any(|part| {
+                        part.content_type == "tool_use" || part.content_type == "tool_result"
+                    });
+
+                    matches_search
+                        && (self.show_thinking_blocks || !is_thinking)
+                        && (self.show_tool_usage || !is_tool)
+                })
+                .cloned()
+                .collect();
+
+            // Reset selection if needed
+            if conv.filtered_messages.is_empty() {
+                conv.message_table_state.select(None);
+            } else if conv.message_table_state.selected().is_none() {
+                conv.message_table_state.select(Some(0));
+            }
+        }
+    }
+
+    fn handle_conversation_search_input(&mut self, key: KeyCode) -> Result<()> {
+        match key {
+            KeyCode::Esc => {
+                self.conversation_search_mode = false;
+                self.conversation_search_query.clear();
+                self.filter_conversation_messages();
+                self.status_message = Some("Search cancelled".to_string());
+            }
+            KeyCode::Enter => {
+                self.conversation_search_mode = false;
+                self.filter_conversation_messages();
+                self.status_message = Some(format!(
+                    "Found {} messages matching '{}'",
+                    self.selected_conversation
+                        .as_ref()
+                        .map_or(0, |c| c.filtered_messages.len()),
+                    self.conversation_search_query
+                ));
+            }
+            KeyCode::Backspace => {
+                self.conversation_search_query.pop();
+                self.filter_conversation_messages();
+            }
+            KeyCode::Char(c) => {
+                self.conversation_search_query.push(c);
+                self.filter_conversation_messages();
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn ui(&mut self, f: &mut Frame) {
         match self.current_mode {
             AppMode::CommandPalette => {
@@ -1645,6 +2223,13 @@ impl TuiApp {
             AppMode::ExportDialog => {
                 self.render_main_ui(f);
                 self.render_export_dialog(f);
+            }
+            AppMode::ConversationView => {
+                if let Some(ref _conv) = self.selected_conversation {
+                    self.render_conversation_view(f);
+                } else {
+                    self.render_main_ui(f);
+                }
             }
             _ => {
                 self.render_main_ui(f);
@@ -1686,6 +2271,7 @@ impl TuiApp {
             AppMode::Search => "Search",
             AppMode::Visual => "Visual",
             AppMode::ExportDialog => "Export",
+            AppMode::ConversationView => "Conversation",
         }
         .to_string();
 
@@ -1765,6 +2351,7 @@ impl TuiApp {
             "📊 Overview",
             "📅 Daily",
             "📋 Sessions",
+            "💬 Conversations",
             "📈 Charts",
             "⏰ Billing",
             "🔄 Resume",
@@ -1790,6 +2377,7 @@ impl TuiApp {
             Tab::Overview => self.render_overview(f, main_area),
             Tab::Daily => self.render_daily(f, main_area),
             Tab::Sessions => self.render_sessions(f, main_area),
+            Tab::Conversations => self.render_conversations(f, main_area),
             Tab::Charts => self.render_charts(f, main_area),
             Tab::BillingBlocks => self.render_billing_blocks(f, main_area),
             Tab::Resume => self.render_resume(f, main_area),
@@ -2385,6 +2973,281 @@ impl TuiApp {
             .end_symbol(Some("↓"));
         let scrollbar_area = chunks[1].inner(Margin::new(1, 1));
         f.render_stateful_widget(scrollbar, scrollbar_area, &mut self.session_scroll_state);
+    }
+
+    fn render_conversations(&mut self, f: &mut Frame, area: Rect) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Header
+                Constraint::Min(0),    // Conversations list
+                Constraint::Length(2), // Instructions
+            ])
+            .split(area);
+
+        // Header
+        let header = Paragraph::new("💬 Conversations")
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Available Conversations")
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
+            .style(Style::default().fg(Color::White));
+        f.render_widget(header, chunks[0]);
+
+        // Conversations table
+        let headers = ["Project", "Session", "Summary", "Messages", "Modified"];
+        let header_cells = headers.iter().map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+        let header_row = Row::new(header_cells).height(1);
+
+        let rows = self
+            .conversation_sessions
+            .iter()
+            .map(|session| {
+                let cells = vec![
+                    Cell::from(self.truncate_text(&session.project_path, 20)),
+                    Cell::from(self.truncate_text(&session.session_id, 15)),
+                    Cell::from(self.truncate_text(&session.summary, 40)),
+                    Cell::from(session.message_count.to_string()),
+                    Cell::from(session.modified_at.format("%Y-%m-%d %H:%M").to_string()),
+                ];
+                Row::new(cells).height(1)
+            })
+            .collect::<Vec<_>>();
+
+        let table = Table::new(
+            rows,
+            &[
+                Constraint::Length(20),
+                Constraint::Length(15),
+                Constraint::Min(40),
+                Constraint::Length(10),
+                Constraint::Length(16),
+            ],
+        )
+        .header(header_row)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Sessions with Conversations")
+                .border_style(Style::default().fg(Color::Gray)),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )
+        .highlight_symbol("▶ ");
+
+        f.render_stateful_widget(table, chunks[1], &mut self.conversation_table_state);
+
+        // Instructions
+        let instructions = Paragraph::new("v: View conversation | c: From sessions tab | /: Search | t: Toggle thinking | u: Toggle tools")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(instructions, chunks[2]);
+    }
+
+    fn render_conversation_view(&mut self, f: &mut Frame) {
+        if let Some(ref conv) = self.selected_conversation {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Header
+                    Constraint::Min(0),    // Messages
+                    Constraint::Length(3), // Status/Instructions
+                ])
+                .split(f.area());
+
+            // Header with session info
+            let header_text = format!(
+                "💬 {} / {} - {} messages{}",
+                conv.session.project_path,
+                conv.session.session_id,
+                conv.filtered_messages.len(),
+                if self.conversation_search_query.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (filtered by: '{}')", self.conversation_search_query)
+                }
+            );
+            let header = Paragraph::new(header_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title(self.truncate_text(&conv.session.summary, 60))
+                        .border_style(Style::default().fg(Color::Blue)),
+                )
+                .style(Style::default().fg(Color::White));
+            f.render_widget(header, chunks[0]);
+
+            // Messages list
+            let message_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
+                .split(chunks[1]);
+
+            // Message content area
+            if let Some(selected_idx) = conv.message_table_state.selected() {
+                if let Some(message) = conv.filtered_messages.get(selected_idx) {
+                    let content_lines;
+
+                    // Check if we have advanced conversation data
+                    if let Some(ref full_conversation) = conv.conversation {
+                        // Try to find the corresponding message in the full conversation
+                        let advanced_message = full_conversation.messages.iter().find(|m| {
+                            m.timestamp == message.timestamp && m.role == message.message.role
+                        });
+
+                        if let Some(adv_msg) = advanced_message {
+                            // Use conversation_display to format the message with syntax highlighting
+                            let formatted_text = conv.display.format_conversation_message_for_tui(
+                                adv_msg,
+                                self.show_thinking_blocks,
+                                self.show_tool_usage,
+                            );
+                            content_lines = formatted_text.lines;
+                        } else {
+                            // Fallback to basic formatting
+                            content_lines = self.format_message_basic(message);
+                        }
+                    } else {
+                        // Use basic formatting when advanced parser is not available
+                        content_lines = self.format_message_basic(message);
+                    }
+
+                    let content = Paragraph::new(content_lines)
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .title("Message Content")
+                                .border_style(Style::default().fg(Color::Gray)),
+                        )
+                        .wrap(Wrap { trim: false })
+                        .scroll((conv.scroll_position as u16, 0));
+                    f.render_widget(content, message_chunks[0]);
+                }
+            }
+
+            // Message list
+            let message_rows = conv
+                .filtered_messages
+                .iter()
+                .enumerate()
+                .map(|(idx, msg)| {
+                    let role_style = match msg.message.role.as_str() {
+                        "user" => Style::default().fg(Color::Green),
+                        "assistant" => Style::default().fg(Color::Blue),
+                        _ => Style::default().fg(Color::Gray),
+                    };
+
+                    let content_preview = msg
+                        .message
+                        .content
+                        .iter()
+                        .find(|p| p.content_type == "text")
+                        .and_then(|p| p.text.as_ref())
+                        .map(|t| self.truncate_text(t.lines().next().unwrap_or(""), 30))
+                        .unwrap_or_else(|| {
+                            format!(
+                                "[{}]",
+                                msg.message
+                                    .content
+                                    .first()
+                                    .map(|p| p.content_type.as_str())
+                                    .unwrap_or("empty")
+                            )
+                        });
+
+                    Row::new(vec![
+                        Cell::from(format!("{}", idx + 1)),
+                        Cell::from(msg.message.role.clone()).style(role_style),
+                        Cell::from(content_preview),
+                    ])
+                    .height(1)
+                })
+                .collect::<Vec<_>>();
+
+            let message_table = Table::new(
+                message_rows,
+                &[
+                    Constraint::Length(4),
+                    Constraint::Length(10),
+                    Constraint::Min(30),
+                ],
+            )
+            .header(Row::new(vec![
+                Cell::from("#").style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from("Role").style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Cell::from("Preview").style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Messages")
+                    .border_style(Style::default().fg(Color::Gray)),
+            )
+            .highlight_style(
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .highlight_symbol("▶ ");
+
+            f.render_stateful_widget(
+                message_table,
+                message_chunks[1],
+                &mut conv.message_table_state.clone(),
+            );
+
+            // Status/Instructions
+            let status_text = if self.conversation_search_mode {
+                format!(
+                    "🔍 Search: {} (Enter to confirm, Esc to cancel)",
+                    self.conversation_search_query
+                )
+            } else {
+                format!(
+                    "Esc: Back | /: Search | t: {} thinking | u: {} tools | ↑↓/jk: Navigate",
+                    if self.show_thinking_blocks {
+                        "Hide"
+                    } else {
+                        "Show"
+                    },
+                    if self.show_tool_usage { "Hide" } else { "Show" }
+                )
+            };
+
+            let status = Paragraph::new(status_text)
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Controls")
+                        .border_style(Style::default().fg(Color::Green)),
+                )
+                .style(Style::default().fg(Color::White))
+                .alignment(ratatui::layout::Alignment::Center);
+            f.render_widget(status, chunks[2]);
+        }
     }
 
     fn render_charts(&self, f: &mut Frame, area: Rect) {
@@ -3388,7 +4251,8 @@ impl TuiApp {
         self.current_tab = match self.current_tab {
             Tab::Overview => Tab::Daily,
             Tab::Daily => Tab::Sessions,
-            Tab::Sessions => Tab::Charts,
+            Tab::Sessions => Tab::Conversations,
+            Tab::Conversations => Tab::Charts,
             Tab::Charts => Tab::BillingBlocks,
             Tab::BillingBlocks => Tab::Resume,
             Tab::Resume => Tab::Help,
@@ -3405,7 +4269,8 @@ impl TuiApp {
             Tab::Overview => Tab::Help,
             Tab::Daily => Tab::Overview,
             Tab::Sessions => Tab::Daily,
-            Tab::Charts => Tab::Sessions,
+            Tab::Conversations => Tab::Sessions,
+            Tab::Charts => Tab::Conversations,
             Tab::BillingBlocks => Tab::Charts,
             Tab::Resume => Tab::BillingBlocks,
             Tab::Help => Tab::Resume,
@@ -3473,6 +4338,20 @@ impl TuiApp {
                 };
                 self.resume_table_state.select(Some(i));
             }
+            Tab::Conversations => {
+                let i = match self.conversation_table_state.selected() {
+                    Some(i) => {
+                        if i >= self.conversation_sessions.len().saturating_sub(1) {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.conversation_table_state.select(Some(i));
+                self.conversation_scroll_state = self.conversation_scroll_state.position(i);
+            }
             _ => {}
         }
     }
@@ -3533,6 +4412,20 @@ impl TuiApp {
                     None => 0,
                 };
                 self.resume_table_state.select(Some(i));
+            }
+            Tab::Conversations => {
+                let i = match self.conversation_table_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.conversation_sessions.len().saturating_sub(1)
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.conversation_table_state.select(Some(i));
+                self.conversation_scroll_state = self.conversation_scroll_state.position(i);
             }
             _ => {}
         }
@@ -3726,6 +4619,95 @@ impl TuiApp {
         } else {
             format!("{}...", &text[..max_length.saturating_sub(3)])
         }
+    }
+
+    fn format_message_basic(&self, message: &ClaudeMessage) -> Vec<Line<'static>> {
+        let mut content_lines = vec![];
+
+        // Add role and timestamp
+        content_lines.push(Line::from(vec![
+            Span::styled("Role: ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                message.message.role.clone(),
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw("  "),
+            Span::styled("Time: ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                message.timestamp.format("%Y-%m-%d %H:%M:%S").to_string(),
+                Style::default().fg(Color::Gray),
+            ),
+        ]));
+        content_lines.push(Line::from(""));
+
+        // Add message content
+        for part in &message.message.content {
+            match part.content_type.as_str() {
+                "text" => {
+                    if let Some(text) = &part.text {
+                        for line in text.lines() {
+                            content_lines.push(Line::from(line.to_string()));
+                        }
+                    }
+                }
+                "thinking" => {
+                    if self.show_thinking_blocks {
+                        content_lines.push(Line::from(vec![Span::styled(
+                            "🤔 [THINKING] ",
+                            Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::ITALIC),
+                        )]));
+                        if let Some(text) = &part.text {
+                            for line in text.lines() {
+                                content_lines.push(Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled(
+                                        line.to_string(),
+                                        Style::default()
+                                            .fg(Color::DarkGray)
+                                            .add_modifier(Modifier::ITALIC),
+                                    ),
+                                ]));
+                            }
+                        }
+                    }
+                }
+                "tool_use" | "tool_result" => {
+                    if self.show_tool_usage {
+                        content_lines.push(Line::from(vec![Span::styled(
+                            format!("🔧 [{}] ", part.content_type.to_uppercase()),
+                            Style::default().fg(Color::Cyan),
+                        )]));
+                        if let Some(text) = &part.text {
+                            for line in text.lines() {
+                                content_lines.push(Line::from(vec![
+                                    Span::raw("  "),
+                                    Span::styled(
+                                        line.to_string(),
+                                        Style::default().fg(Color::DarkGray),
+                                    ),
+                                ]));
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    content_lines.push(Line::from(vec![Span::styled(
+                        format!("[{}] ", part.content_type),
+                        Style::default().fg(Color::Gray),
+                    )]));
+                    if let Some(text) = &part.text {
+                        content_lines.push(Line::from(text.to_string()));
+                    }
+                }
+            }
+            content_lines.push(Line::from(""));
+        }
+
+        content_lines
     }
 
     fn handle_mouse_event(&mut self, mouse: MouseEvent) {
@@ -3953,12 +4935,16 @@ impl TuiApp {
         f.render_widget(block, popup_area);
 
         // Data type indicator
-        let data_type = match self.current_tab {
-            Tab::Daily => "Daily Report",
-            Tab::Sessions => "Sessions Report",
-            Tab::BillingBlocks => "Billing Blocks",
-            Tab::Overview => "Summary",
-            _ => "Current View",
+        let data_type = if self.previous_mode == Some(AppMode::ConversationView) {
+            "Conversation"
+        } else {
+            match self.current_tab {
+                Tab::Daily => "Daily Report",
+                Tab::Sessions => "Sessions Report",
+                Tab::BillingBlocks => "Billing Blocks",
+                Tab::Overview => "Summary",
+                _ => "Current View",
+            }
         };
 
         let data_info = Paragraph::new(vec![Line::from(vec![
@@ -3989,12 +4975,41 @@ impl TuiApp {
             Style::default().fg(Color::White)
         };
 
-        let format_selection = Paragraph::new(vec![Line::from(vec![
-            Span::styled("Format: ", Style::default().fg(Color::Cyan)),
-            Span::styled("  CSV  ", csv_style),
-            Span::styled("    ", Style::default()),
-            Span::styled("  JSON  ", json_style),
-        ])])
+        let markdown_style = if self.export_dialog_state.selected_format == ExportFormat::Markdown {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let text_style = if self.export_dialog_state.selected_format == ExportFormat::Text {
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        let format_selection = if self.previous_mode == Some(AppMode::ConversationView) {
+            // Show all formats for conversations
+            Paragraph::new(vec![Line::from(vec![
+                Span::styled("Format: ", Style::default().fg(Color::Cyan)),
+                Span::styled(" JSON ", json_style),
+                Span::styled("  ", Style::default()),
+                Span::styled(" Markdown ", markdown_style),
+                Span::styled("  ", Style::default()),
+                Span::styled(" Text ", text_style),
+            ])])
+        } else {
+            // Show CSV and JSON for other exports
+            Paragraph::new(vec![Line::from(vec![
+                Span::styled("Format: ", Style::default().fg(Color::Cyan)),
+                Span::styled("  CSV  ", csv_style),
+                Span::styled("    ", Style::default()),
+                Span::styled("  JSON  ", json_style),
+            ])])
+        }
         .block(Block::default().borders(Borders::NONE));
         f.render_widget(format_selection, chunks[1]);
 
@@ -4023,7 +5038,16 @@ impl TuiApp {
         f.render_widget(instructions, chunks[2]);
 
         // Show success or error message if any
-        if let Some(error) = &self.export_dialog_state.error_message {
+        if self.export_dialog_state.show_success_message {
+            let success_msg = Paragraph::new(vec![Line::from(vec![
+                Span::styled("✅ ", Style::default().fg(Color::Green)),
+                Span::styled(
+                    &self.export_dialog_state.success_message,
+                    Style::default().fg(Color::Green),
+                ),
+            ])]);
+            f.render_widget(success_msg, chunks[3]);
+        } else if let Some(error) = &self.export_dialog_state.error_message {
             let error_msg = Paragraph::new(vec![Line::from(vec![
                 Span::styled("❌ ", Style::default().fg(Color::Red)),
                 Span::styled(error, Style::default().fg(Color::Red)),

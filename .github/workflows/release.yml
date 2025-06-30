@@ -20,23 +20,23 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact_name: claudelytics
-            asset_name: claudelytics-linux-x86_64
+            archive_name: claudelytics-x86_64-unknown-linux-gnu.tar.gz
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             artifact_name: claudelytics
-            asset_name: claudelytics-linux-x86_64-musl
+            archive_name: claudelytics-x86_64-unknown-linux-musl.tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: claudelytics.exe
-            asset_name: claudelytics-windows-x86_64.exe
+            archive_name: claudelytics-x86_64-pc-windows-msvc.tar.gz
           - os: macos-latest
             target: x86_64-apple-darwin
             artifact_name: claudelytics
-            asset_name: claudelytics-macos-x86_64
+            archive_name: claudelytics-x86_64-apple-darwin.tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact_name: claudelytics
-            asset_name: claudelytics-macos-aarch64
+            archive_name: claudelytics-aarch64-apple-darwin.tar.gz
     runs-on: ${{ matrix.os }}
     steps:
     - uses: actions/checkout@v4
@@ -49,14 +49,53 @@ jobs:
       run: sudo apt-get install -y musl-tools
     - name: Build
       run: cargo build --release --target ${{ matrix.target }}
-    - name: Rename artifact
+    - name: Create archive
       shell: bash
       run: |
-        cp ./target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ./${{ matrix.asset_name }}
-    - name: Create Release and Upload Assets
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          cp ./target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ./claudelytics.exe
+          tar -czf ${{ matrix.archive_name }} claudelytics.exe
+        else
+          cp ./target/${{ matrix.target }}/release/${{ matrix.artifact_name }} ./claudelytics
+          tar -czf ${{ matrix.archive_name }} claudelytics
+        fi
+    - name: Generate checksum
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "macos-latest" ]]; then
+          shasum -a 256 ${{ matrix.archive_name }} > ${{ matrix.archive_name }}.sha256
+        else
+          sha256sum ${{ matrix.archive_name }} > ${{ matrix.archive_name }}.sha256
+        fi
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-${{ matrix.target }}
+        path: |
+          ${{ matrix.archive_name }}
+          ${{ matrix.archive_name }}.sha256
+
+  create-release:
+    name: Create Release
+    needs: build-release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts
+    - name: Combine checksums
+      run: |
+        cd artifacts
+        cat release-*/**.sha256 > ../checksums.txt
+        cd ..
+    - name: Create Release
       uses: softprops/action-gh-release@v1
       with:
-        files: ${{ matrix.asset_name }}
+        files: |
+          artifacts/release-*/*.tar.gz
+          checksums.txt
         tag_name: ${{ github.ref_name }}
         name: Release ${{ github.ref_name }}
         draft: false
@@ -67,7 +106,7 @@ jobs:
   publish-crates:
     name: Publish to crates.io
     runs-on: ubuntu-latest
-    needs: build-release
+    needs: create-release
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable

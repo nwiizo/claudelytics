@@ -1,6 +1,6 @@
 [package]
 name = "claudelytics"
-version = "0.4.3"
+version = "0.5.1"
 edition = "2024"
 description = "A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs"
 authors = ["nwiizo <nwiizo@gmail.com>"]
@@ -36,5 +36,6 @@ dirs = "5.0"
 terminal_size = "0.4"
 tempfile = "3.8"
 uuid = { version = "1.6", features = ["v4", "serde"] }
+ctrlc = "3.4"
 
 [dev-dependencies]
