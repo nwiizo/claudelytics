@@ -4854,12 +4854,7 @@ impl TuiApp {
                 "text" => {
                     if let Some(text) = &part.text {
                         for line in text.lines() {
-                            // Highlight search matches if there's an active search
-                            if !self.conversation_search_query.is_empty() {
-                                content_lines.push(self.highlight_search_matches(line));
-                            } else {
-                                content_lines.push(Line::from(line.to_string()));
-                            }
+                            content_lines.push(Line::from(line.to_string()));
                         }
                     }
                 }
