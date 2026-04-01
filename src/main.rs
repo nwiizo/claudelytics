@@ -6,6 +6,7 @@
 // Module declarations
 mod billing_blocks;
 mod burn_rate;
+mod cache_analysis;
 mod claude_sessions;
 mod config;
 mod config_v2;
@@ -403,6 +404,18 @@ enum Commands {
             long_help = "Include summary statistics\nShows: peak block, average usage, patterns by time"
         )]
         summary: bool,
+    },
+    #[command(about = "Analyze cache behavior and TTL efficiency")]
+    #[command(
+        long_about = "Analyze per-turn cache behavior across sessions\n\nBreaks down cache writes by TTL bucket (5m vs 60m expiry), identifies\ncold start costs, and computes the cache balance point per session.\n\nEXAMPLES:\n  claudelytics cache                    # Cache analysis summary\n  claudelytics cache --top 20           # Show top 20 sessions\n  claudelytics --today cache            # Today only (global flag)\n  claudelytics --json cache             # JSON output (global flag)\n  claudelytics --project myproj cache   # Filter by project (global flag)"
+    )]
+    Cache {
+        #[arg(
+            long,
+            default_value = "10",
+            help = "Number of sessions to show in detail"
+        )]
+        top: usize,
     },
     #[command(about = "Start Model Context Protocol (MCP) server")]
     #[command(
@@ -1238,6 +1251,16 @@ fn run() -> Result<()> {
                 frequency,
                 efficiency,
                 threshold,
+            )?;
+        }
+        Commands::Cache { top } => {
+            handle_cache_command(
+                &claude_dir,
+                since_date.as_deref(),
+                until_date.as_deref(),
+                None,
+                cli.json,
+                top,
             )?;
         }
         Commands::Realtime {
@@ -2517,6 +2540,22 @@ fn handle_analytics_command(
 
     println!("\n{}", "═".repeat(50).blue());
 
+    Ok(())
+}
+
+fn handle_cache_command(
+    claude_dir: &Path,
+    since: Option<&str>,
+    until: Option<&str>,
+    project: Option<&str>,
+    json: bool,
+    top: usize,
+) -> Result<()> {
+    use chrono::NaiveDate;
+    let since_date = since.and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
+    let until_date = until.and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
+    let analysis = cache_analysis::analyze_cache(claude_dir, since_date, until_date, project)?;
+    cache_analysis::display_cache_analysis(&analysis, json, top);
     Ok(())
 }
 
