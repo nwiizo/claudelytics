@@ -77,6 +77,26 @@ pub enum SortOrder {
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum CacheSortField {
+    /// Sort by write cost (default)
+    WriteCost,
+    /// Sort by cache hit rate
+    HitRate,
+    /// Sort by 5m TTL miss tokens
+    #[value(name = "miss-5m")]
+    Miss5m,
+    /// Sort by 60m TTL miss tokens
+    #[value(name = "miss-60m")]
+    Miss60m,
+    /// Sort by cold start tokens
+    ColdStart,
+    /// Sort by normal churn tokens
+    NormalChurn,
+    /// Sort by break-even turn (ascending)
+    BreakevenTurn,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum SortField {
     /// Sort by date/time
     Date,
@@ -162,6 +182,12 @@ struct Cli {
         long_help = "Filter to show only today's usage data\nEquivalent to setting --since and --until to today's date\nCombines with other commands: claudelytics --today session"
     )]
     today: bool,
+
+    #[arg(long, help = "Show last 7 days")]
+    last_7d: bool,
+
+    #[arg(long, help = "Show last 30 days")]
+    last_30d: bool,
 
     #[arg(
         long,
@@ -416,6 +442,39 @@ enum Commands {
             help = "Number of sessions to show in detail"
         )]
         top: usize,
+
+        #[arg(long, default_value = "10", help = "Number of projects to show")]
+        top_projects: usize,
+
+        #[arg(long, help = "Filter by project path substring")]
+        project: Option<String>,
+
+        #[arg(long, default_value = "write-cost", help = "Sort sessions by field")]
+        sort: CacheSortField,
+
+        #[arg(long, help = "Sort ascending")]
+        asc: bool,
+
+        #[arg(long, help = "Sort descending")]
+        desc: bool,
+
+        #[arg(
+            long,
+            default_value = "0.92",
+            value_name = "RATIO",
+            help = "Cache hit rate threshold for warmup detection (0.0-1.0)"
+        )]
+        threshold: f64,
+
+        #[arg(
+            long,
+            value_name = "PCT",
+            help = "Min cache hit rate % to show (e.g. 90)"
+        )]
+        min_hit: Option<f64>,
+
+        #[arg(long, value_name = "PCT", help = "Min churn rate % to show (e.g. 50)")]
+        min_churn: Option<f64>,
     },
     #[command(about = "Start Model Context Protocol (MCP) server")]
     #[command(
@@ -896,10 +955,24 @@ fn run() -> Result<()> {
         })
     };
 
-    // Handle --today flag by setting since and until to today
+    // Handle date shortcut flags: today > last_7d > last_30d > explicit
     let (since_date, until_date) = if cli.today {
         let today = Local::now().date_naive().format("%Y%m%d").to_string();
         (Some(today.clone()), Some(today))
+    } else if cli.last_7d {
+        let today = Local::now().date_naive();
+        let since = (today - chrono::Duration::days(6))
+            .format("%Y%m%d")
+            .to_string();
+        let until = today.format("%Y%m%d").to_string();
+        (Some(since), Some(until))
+    } else if cli.last_30d {
+        let today = Local::now().date_naive();
+        let since = (today - chrono::Duration::days(29))
+            .format("%Y%m%d")
+            .to_string();
+        let until = today.format("%Y%m%d").to_string();
+        (Some(since), Some(until))
     } else {
         (cli.since, cli.until)
     };
@@ -1253,14 +1326,37 @@ fn run() -> Result<()> {
                 threshold,
             )?;
         }
-        Commands::Cache { top } => {
+        Commands::Cache {
+            top,
+            top_projects,
+            project,
+            sort,
+            asc,
+            desc,
+            threshold,
+            min_hit,
+            min_churn,
+        } => {
+            let sort_asc = if asc {
+                Some(true)
+            } else if desc {
+                Some(false)
+            } else {
+                None
+            };
             handle_cache_command(
                 &claude_dir,
                 since_date.as_deref(),
                 until_date.as_deref(),
-                None,
+                project.as_deref(),
                 cli.json,
                 top,
+                top_projects,
+                convert_cache_sort_field(sort),
+                threshold,
+                sort_asc,
+                min_hit,
+                min_churn,
             )?;
         }
         Commands::Realtime {
@@ -2543,6 +2639,19 @@ fn handle_analytics_command(
     Ok(())
 }
 
+fn convert_cache_sort_field(field: CacheSortField) -> cache_analysis::CacheSortField {
+    match field {
+        CacheSortField::WriteCost => cache_analysis::CacheSortField::WriteCost,
+        CacheSortField::HitRate => cache_analysis::CacheSortField::HitRate,
+        CacheSortField::Miss5m => cache_analysis::CacheSortField::Miss5m,
+        CacheSortField::Miss60m => cache_analysis::CacheSortField::Miss60m,
+        CacheSortField::ColdStart => cache_analysis::CacheSortField::ColdStart,
+        CacheSortField::NormalChurn => cache_analysis::CacheSortField::NormalChurn,
+        CacheSortField::BreakevenTurn => cache_analysis::CacheSortField::BreakevenTurn,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn handle_cache_command(
     claude_dir: &Path,
     since: Option<&str>,
@@ -2550,12 +2659,30 @@ fn handle_cache_command(
     project: Option<&str>,
     json: bool,
     top: usize,
+    top_projects: usize,
+    sort_field: cache_analysis::CacheSortField,
+    warmup_threshold: f64,
+    sort_asc: Option<bool>,
+    min_hit: Option<f64>,
+    min_churn: Option<f64>,
 ) -> Result<()> {
     use chrono::NaiveDate;
     let since_date = since.and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
     let until_date = until.and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
-    let analysis = cache_analysis::analyze_cache(claude_dir, since_date, until_date, project)?;
-    cache_analysis::display_cache_analysis(&analysis, json, top);
+    let threshold = warmup_threshold.clamp(0.5, 0.99);
+    let analysis =
+        cache_analysis::analyze_cache(claude_dir, since_date, until_date, project, threshold)?;
+    cache_analysis::display_cache_analysis(
+        &analysis,
+        json,
+        top,
+        top_projects,
+        sort_field,
+        threshold,
+        sort_asc,
+        min_hit,
+        min_churn,
+    );
     Ok(())
 }
 

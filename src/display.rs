@@ -590,11 +590,14 @@ fn display_daily_cards(daily: &[crate::models::DailyUsage]) {
         } else {
             0.0
         };
-        let cache_efficiency = if (day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens) > 0 {
-            day.cache_read_tokens as f64 / (day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens) as f64 * 100.0
-        } else {
-            0.0
-        };
+        let cache_efficiency =
+            if (day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens) > 0 {
+                day.cache_read_tokens as f64
+                    / (day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens) as f64
+                    * 100.0
+            } else {
+                0.0
+            };
 
         println!("{} {}", title_emoji, date_text);
         println!(
@@ -673,12 +676,15 @@ fn display_daily_table_compact(report: &DailyReport, force_compact: bool) {
         } else {
             0.0
         };
-        let cache_efficiency = if (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) > 0 {
-            daily.cache_read_tokens as f64 / (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) as f64
-                * 100.0
-        } else {
-            0.0
-        };
+        let cache_efficiency =
+            if (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) > 0 {
+                daily.cache_read_tokens as f64
+                    / (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens)
+                        as f64
+                    * 100.0
+            } else {
+                0.0
+            };
 
         let mut row = vec![
             Cell::new(&daily.date).fg(date_color),
@@ -743,12 +749,15 @@ fn display_daily_table_complete(report: &DailyReport) {
         } else {
             0.0
         };
-        let cache_efficiency = if (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) > 0 {
-            daily.cache_read_tokens as f64 / (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) as f64
-                * 100.0
-        } else {
-            0.0
-        };
+        let cache_efficiency =
+            if (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) > 0 {
+                daily.cache_read_tokens as f64
+                    / (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens)
+                        as f64
+                    * 100.0
+            } else {
+                0.0
+            };
 
         let row = vec![
             Cell::new(&daily.date).fg(date_color),

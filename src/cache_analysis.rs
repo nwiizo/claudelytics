@@ -1,13 +1,23 @@
-#![allow(dead_code)]
-
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use colored::Colorize;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CacheSortField {
+    WriteCost,
+    HitRate,
+    Miss5m,
+    Miss60m,
+    ColdStart,
+    NormalChurn,
+    BreakevenTurn,
+}
 
 #[derive(Debug, Clone)]
 struct CacheTurn {
@@ -22,7 +32,9 @@ struct CacheTurn {
 pub struct SessionCacheAnalysis {
     pub session_id: String,
     pub project: String,
-    pub balance_point: Option<usize>,
+    pub warmup_turn: Option<usize>,
+    pub breakeven_turn: Option<usize>,
+    pub hit_rate_pct: f64,
     pub cold_start_tokens: u64,
     pub ttl_5m_miss_tokens: u64,
     pub ttl_60m_miss_tokens: u64,
@@ -30,6 +42,19 @@ pub struct SessionCacheAnalysis {
     pub total_cache_write_tokens: u64,
     pub total_cache_read_tokens: u64,
     pub turn_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProjectCacheAggregate {
+    pub project: String,
+    pub session_count: usize,
+    pub total_writes: u64,
+    pub total_reads: u64,
+    pub hit_rate_pct: f64,
+    pub total_cold_start: u64,
+    pub total_5m_miss: u64,
+    pub total_60m_miss: u64,
+    pub total_normal_churn: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,7 +66,9 @@ pub struct CacheAnalysis {
     pub total_normal_churn: u64,
     pub total_cache_writes: u64,
     pub total_cache_reads: u64,
-    pub avg_balance_point: f64,
+    pub avg_warmup_turn: f64,
+    pub avg_breakeven_turn: f64,
+    pub project_aggregates: Vec<ProjectCacheAggregate>,
 }
 
 fn parse_cache_turns(file_path: &Path) -> Vec<CacheTurn> {
@@ -66,7 +93,6 @@ fn parse_cache_turns(file_path: &Path) -> Vec<CacheTurn> {
             Err(_) => continue,
         };
 
-        // Only assistant messages with usage and output_tokens > 0
         if record.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
         }
@@ -134,8 +160,7 @@ fn parse_cache_turns(file_path: &Path) -> Vec<CacheTurn> {
     turns
 }
 
-fn compute_balance_point(turns: &[CacheTurn]) -> Option<usize> {
-    // Find first index where cache_read/(cache_read+cache_creation) > 0.9 for 3 consecutive turns
+fn compute_warmup_turn(turns: &[CacheTurn], threshold: f64) -> Option<usize> {
     if turns.len() < 3 {
         return None;
     }
@@ -146,7 +171,7 @@ fn compute_balance_point(turns: &[CacheTurn]) -> Option<usize> {
             if total == 0 {
                 return false;
             }
-            t.cache_read_tokens as f64 / total as f64 > 0.9
+            t.cache_read_tokens as f64 / total as f64 > threshold
         });
         if all_hit {
             return Some(i);
@@ -156,8 +181,32 @@ fn compute_balance_point(turns: &[CacheTurn]) -> Option<usize> {
     None
 }
 
-fn classify_session(turns: &[CacheTurn], session_id: &str, project: &str) -> SessionCacheAnalysis {
-    let balance_point = compute_balance_point(turns);
+fn compute_breakeven_turn(turns: &[CacheTurn]) -> Option<usize> {
+    let mut cumulative_write_cost = 0.0_f64;
+    let mut cumulative_read_savings = 0.0_f64;
+
+    for (i, turn) in turns.iter().enumerate() {
+        cumulative_write_cost += write_cost(turn.cache_creation_tokens);
+        // Savings = what reads would have cost as writes minus actual read cost
+        cumulative_read_savings +=
+            write_cost(turn.cache_read_tokens) - read_cost(turn.cache_read_tokens);
+
+        if cumulative_write_cost > 0.0 && cumulative_read_savings >= cumulative_write_cost {
+            return Some(i);
+        }
+    }
+
+    None
+}
+
+fn classify_session(
+    turns: &[CacheTurn],
+    session_id: &str,
+    project: &str,
+    threshold: f64,
+) -> SessionCacheAnalysis {
+    let warmup_turn = compute_warmup_turn(turns, threshold);
+    let breakeven_turn = compute_breakeven_turn(turns);
 
     let mut cold_start_tokens = 0u64;
     let mut ttl_5m_miss_tokens = 0u64;
@@ -175,16 +224,14 @@ fn classify_session(turns: &[CacheTurn], session_id: &str, project: &str) -> Ses
             continue;
         }
 
-        match balance_point {
+        match warmup_turn {
             None => {
-                // No balance point found, everything is cold start
                 cold_start_tokens += write_tokens;
             }
             Some(bp) if i < bp => {
                 cold_start_tokens += write_tokens;
             }
             _ => {
-                // After balance point: classify by gap from previous turn
                 if i == 0 {
                     cold_start_tokens += write_tokens;
                     continue;
@@ -193,14 +240,12 @@ fn classify_session(turns: &[CacheTurn], session_id: &str, project: &str) -> Ses
                 let gap_minutes = (turn.timestamp - prev.timestamp).num_minutes();
 
                 if gap_minutes > 60 {
-                    // 60m TTL miss: gap > 60min and ephemeral_1h data present (or fallback: any write after long gap)
                     if turn.ephemeral_1h_tokens > 0 || turn.ephemeral_5m_tokens == 0 {
                         ttl_60m_miss_tokens += write_tokens;
                     } else {
                         ttl_5m_miss_tokens += write_tokens;
                     }
                 } else if gap_minutes > 5 {
-                    // 5m TTL miss: gap > 5min and ephemeral_5m data present (or fallback)
                     if turn.ephemeral_5m_tokens > 0 || turn.ephemeral_1h_tokens == 0 {
                         ttl_5m_miss_tokens += write_tokens;
                     } else {
@@ -213,10 +258,19 @@ fn classify_session(turns: &[CacheTurn], session_id: &str, project: &str) -> Ses
         }
     }
 
+    let total = total_cache_write_tokens + total_cache_read_tokens;
+    let hit_rate_pct = if total > 0 {
+        total_cache_read_tokens as f64 / total as f64 * 100.0
+    } else {
+        0.0
+    };
+
     SessionCacheAnalysis {
         session_id: session_id.to_string(),
         project: project.to_string(),
-        balance_point,
+        warmup_turn,
+        breakeven_turn,
+        hit_rate_pct,
         cold_start_tokens,
         ttl_5m_miss_tokens,
         ttl_60m_miss_tokens,
@@ -261,11 +315,60 @@ fn extract_project_from_file(file_path: &Path) -> String {
     String::from("unknown")
 }
 
+fn build_project_aggregates(sessions: &[SessionCacheAnalysis]) -> Vec<ProjectCacheAggregate> {
+    let mut map: HashMap<String, ProjectCacheAggregate> = HashMap::new();
+
+    for s in sessions {
+        let agg = map
+            .entry(s.project.clone())
+            .or_insert_with(|| ProjectCacheAggregate {
+                project: s.project.clone(),
+                session_count: 0,
+                total_writes: 0,
+                total_reads: 0,
+                hit_rate_pct: 0.0,
+                total_cold_start: 0,
+                total_5m_miss: 0,
+                total_60m_miss: 0,
+                total_normal_churn: 0,
+            });
+        agg.session_count += 1;
+        agg.total_writes += s.total_cache_write_tokens;
+        agg.total_reads += s.total_cache_read_tokens;
+        agg.total_cold_start += s.cold_start_tokens;
+        agg.total_5m_miss += s.ttl_5m_miss_tokens;
+        agg.total_60m_miss += s.ttl_60m_miss_tokens;
+        agg.total_normal_churn += s.normal_churn_tokens;
+    }
+
+    let mut aggregates: Vec<ProjectCacheAggregate> = map
+        .into_values()
+        .map(|mut agg| {
+            let total = agg.total_writes + agg.total_reads;
+            agg.hit_rate_pct = if total > 0 {
+                agg.total_reads as f64 / total as f64 * 100.0
+            } else {
+                0.0
+            };
+            agg
+        })
+        .collect();
+
+    aggregates.sort_by(|a, b| {
+        b.total_writes
+            .partial_cmp(&a.total_writes)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    aggregates
+}
+
 pub fn analyze_cache(
     claude_dir: &Path,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
     project_filter: Option<&str>,
+    warmup_threshold: f64,
 ) -> Result<CacheAnalysis> {
     let projects_dir = claude_dir.join("projects");
 
@@ -289,15 +392,11 @@ pub fn analyze_cache(
                 .map(|ext| ext == "jsonl")
                 .unwrap_or(false)
         })
-        .filter(|e| {
-            // Skip subagents directories
-            !e.path().to_string_lossy().contains("/subagents/")
-        })
+        .filter(|e| !e.path().to_string_lossy().contains("/subagents/"))
         .map(|e| e.path().to_path_buf())
         .collect();
 
     for file_path in &jsonl_files {
-        // mtime pre-filter: skip files modified before since date
         if let Some(since_date) = since
             && let Some(modified) = std::fs::metadata(file_path)
                 .ok()
@@ -314,7 +413,6 @@ pub fn analyze_cache(
             continue;
         }
 
-        // Apply date filter on turns
         let turns: Vec<CacheTurn> = turns
             .into_iter()
             .filter(|t| {
@@ -351,7 +449,7 @@ pub fn analyze_cache(
             .unwrap_or("unknown")
             .to_string();
 
-        let analysis = classify_session(&turns, &session_id, &project);
+        let analysis = classify_session(&turns, &session_id, &project, warmup_threshold);
         sessions.push(analysis);
     }
 
@@ -362,12 +460,21 @@ pub fn analyze_cache(
     let total_cache_writes: u64 = sessions.iter().map(|s| s.total_cache_write_tokens).sum();
     let total_cache_reads: u64 = sessions.iter().map(|s| s.total_cache_read_tokens).sum();
 
-    let sessions_with_bp: Vec<usize> = sessions.iter().filter_map(|s| s.balance_point).collect();
-    let avg_balance_point = if sessions_with_bp.is_empty() {
+    let warmup_turns: Vec<usize> = sessions.iter().filter_map(|s| s.warmup_turn).collect();
+    let avg_warmup_turn = if warmup_turns.is_empty() {
         0.0
     } else {
-        sessions_with_bp.iter().sum::<usize>() as f64 / sessions_with_bp.len() as f64
+        warmup_turns.iter().sum::<usize>() as f64 / warmup_turns.len() as f64
     };
+
+    let breakeven_turns: Vec<usize> = sessions.iter().filter_map(|s| s.breakeven_turn).collect();
+    let avg_breakeven_turn = if breakeven_turns.is_empty() {
+        0.0
+    } else {
+        breakeven_turns.iter().sum::<usize>() as f64 / breakeven_turns.len() as f64
+    };
+
+    let project_aggregates = build_project_aggregates(&sessions);
 
     Ok(CacheAnalysis {
         sessions,
@@ -377,7 +484,9 @@ pub fn analyze_cache(
         total_normal_churn,
         total_cache_writes,
         total_cache_reads,
-        avg_balance_point,
+        avg_warmup_turn,
+        avg_breakeven_turn,
+        project_aggregates,
     })
 }
 
@@ -399,7 +508,18 @@ fn read_cost(tokens: u64) -> f64 {
     tokens as f64 * 0.30 / 1_000_000.0
 }
 
-pub fn display_cache_analysis(analysis: &CacheAnalysis, json: bool, top: usize) {
+#[allow(clippy::too_many_arguments)]
+pub fn display_cache_analysis(
+    analysis: &CacheAnalysis,
+    json: bool,
+    top: usize,
+    top_projects: usize,
+    sort_field: CacheSortField,
+    warmup_threshold: f64,
+    sort_asc_override: Option<bool>,
+    min_hit: Option<f64>,
+    min_churn: Option<f64>,
+) {
     if json {
         match serde_json::to_string_pretty(analysis) {
             Ok(s) => println!("{}", s),
@@ -456,86 +576,248 @@ pub fn display_cache_analysis(analysis: &CacheAnalysis, json: bool, top: usize) 
         read_cost(analysis.total_cache_reads)
     );
 
+    let threshold_pct = (warmup_threshold * 100.0) as u32;
     println!(
         "\n{} {:.1} turns",
-        "Average cache balance point:".bold(),
-        analysis.avg_balance_point
+        format!("Avg warmup turn (>{}% hit rate):", threshold_pct).bold(),
+        analysis.avg_warmup_turn
+    );
+    println!(
+        "{} {:.1} turns",
+        "Avg break-even turn:".bold(),
+        analysis.avg_breakeven_turn
     );
 
+    // Sessions table
     let top_n = top.min(analysis.sessions.len());
-    if top_n == 0 {
-        return;
-    }
-
-    println!(
-        "\n{}",
-        format!("Top {} Sessions by Cache Write Cost", top_n).bold()
-    );
-    println!("{}", "─".repeat(56));
-
-    let header = format!(
-        "{:<10} {:<25} {:>5} {:>4} {:>9} {:>9} {:>9} {:>6}",
-        "Session", "Project", "Hit%", "Bal", "5m Miss", "60m Miss", "Cold", "Write$"
-    );
-    println!("{}", header.bold());
-    println!(
-        "{} {} {} {} {} {} {} {}",
-        "─".repeat(10),
-        "─".repeat(25),
-        "─".repeat(5),
-        "─".repeat(4),
-        "─".repeat(9),
-        "─".repeat(9),
-        "─".repeat(9),
-        "─".repeat(6)
-    );
-
-    let mut sorted_sessions = analysis.sessions.clone();
-    sorted_sessions.sort_by(|a, b| {
-        write_cost(b.total_cache_write_tokens)
-            .partial_cmp(&write_cost(a.total_cache_write_tokens))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
-    for session in sorted_sessions.iter().take(top_n) {
-        let short_id = if session.session_id.len() >= 8 {
-            &session.session_id[..8]
-        } else {
-            &session.session_id
-        };
-
-        let total = session.total_cache_write_tokens + session.total_cache_read_tokens;
-        let hit_pct = if total > 0 {
-            format!(
-                "{:.1}%",
-                session.total_cache_read_tokens as f64 / total as f64 * 100.0
-            )
-        } else {
-            "-".to_string()
-        };
-
-        let bal = session
-            .balance_point
-            .map(|bp| format!("T{}", bp))
-            .unwrap_or_else(|| "-".to_string());
-
-        let project_display = if session.project.len() > 24 {
-            format!("...{}", &session.project[session.project.len() - 21..])
-        } else {
-            session.project.clone()
+    if top_n > 0 {
+        let sort_label = match sort_field {
+            CacheSortField::WriteCost => "Cache Write Cost",
+            CacheSortField::HitRate => "Cache Hit Rate",
+            CacheSortField::Miss5m => "5m TTL Miss",
+            CacheSortField::Miss60m => "60m TTL Miss",
+            CacheSortField::ColdStart => "Cold Start",
+            CacheSortField::NormalChurn => "Normal Churn",
+            CacheSortField::BreakevenTurn => "Break-even Turn",
         };
 
         println!(
-            "{:<10} {:<25} {:>5} {:>4} {:>9} {:>9} {:>9} {:>6}",
-            short_id.cyan(),
-            project_display,
-            hit_pct,
-            bal,
-            format_tokens(session.ttl_5m_miss_tokens),
-            format_tokens(session.ttl_60m_miss_tokens),
-            format_tokens(session.cold_start_tokens),
-            format!("${:.2}", write_cost(session.total_cache_write_tokens))
+            "\n{}",
+            format!("Top {} Sessions by {}", top_n, sort_label).bold()
         );
+        println!("{}", "─".repeat(99));
+
+        let header = format!(
+            "{:<10} {:<22} {:>5} {:>5} {:>4} {:>9} {:>9} {:>9} {:>6} {:>7}",
+            "Session",
+            "Project",
+            "Hit%",
+            "Warm",
+            "BE",
+            "5m Miss",
+            "60m Miss",
+            "Cold",
+            "Churn%",
+            "Write$"
+        );
+        println!("{}", header.bold());
+        println!(
+            "{} {} {} {} {} {} {} {} {} {}",
+            "─".repeat(10),
+            "─".repeat(22),
+            "─".repeat(5),
+            "─".repeat(5),
+            "─".repeat(4),
+            "─".repeat(9),
+            "─".repeat(9),
+            "─".repeat(9),
+            "─".repeat(6),
+            "─".repeat(7)
+        );
+
+        let mut sorted_sessions = analysis.sessions.clone();
+        sorted_sessions.sort_by(|a, b| {
+            let (va, vb) = match sort_field {
+                CacheSortField::WriteCost => (
+                    write_cost(a.total_cache_write_tokens),
+                    write_cost(b.total_cache_write_tokens),
+                ),
+                CacheSortField::HitRate => (a.hit_rate_pct, b.hit_rate_pct),
+                CacheSortField::Miss5m => {
+                    (a.ttl_5m_miss_tokens as f64, b.ttl_5m_miss_tokens as f64)
+                }
+                CacheSortField::Miss60m => {
+                    (a.ttl_60m_miss_tokens as f64, b.ttl_60m_miss_tokens as f64)
+                }
+                CacheSortField::ColdStart => {
+                    (a.cold_start_tokens as f64, b.cold_start_tokens as f64)
+                }
+                CacheSortField::NormalChurn => {
+                    let churn_a = if a.total_cache_write_tokens > 0 {
+                        a.normal_churn_tokens as f64 / a.total_cache_write_tokens as f64
+                    } else {
+                        0.0
+                    };
+                    let churn_b = if b.total_cache_write_tokens > 0 {
+                        b.normal_churn_tokens as f64 / b.total_cache_write_tokens as f64
+                    } else {
+                        0.0
+                    };
+                    (churn_a, churn_b)
+                }
+                CacheSortField::BreakevenTurn => (
+                    a.breakeven_turn.map(|t| t as f64).unwrap_or(f64::MAX),
+                    b.breakeven_turn.map(|t| t as f64).unwrap_or(f64::MAX),
+                ),
+            };
+            let default_asc = matches!(sort_field, CacheSortField::BreakevenTurn);
+            let ascending = sort_asc_override.unwrap_or(default_asc);
+            if ascending {
+                va.partial_cmp(&vb).unwrap_or(std::cmp::Ordering::Equal)
+            } else {
+                vb.partial_cmp(&va).unwrap_or(std::cmp::Ordering::Equal)
+            }
+        });
+
+        let filtered_sessions: Vec<&SessionCacheAnalysis> = sorted_sessions
+            .iter()
+            .filter(|s| {
+                if let Some(min) = min_hit
+                    && s.hit_rate_pct < min
+                {
+                    return false;
+                }
+                if let Some(min) = min_churn {
+                    let churn_rate = if s.total_cache_write_tokens > 0 {
+                        s.normal_churn_tokens as f64 / s.total_cache_write_tokens as f64 * 100.0
+                    } else {
+                        0.0
+                    };
+                    if churn_rate < min {
+                        return false;
+                    }
+                }
+                true
+            })
+            .take(top_n)
+            .collect();
+
+        for session in &filtered_sessions {
+            let short_id = if session.session_id.len() >= 8 {
+                &session.session_id[..8]
+            } else {
+                &session.session_id
+            };
+
+            let hit_pct = if session.hit_rate_pct > 0.0 {
+                format!("{:.1}%", session.hit_rate_pct)
+            } else {
+                "-".to_string()
+            };
+
+            let warm = session
+                .warmup_turn
+                .map(|t| format!("T{}", t))
+                .unwrap_or_else(|| "-".to_string());
+
+            let be_val = session.breakeven_turn;
+            let be_str = be_val
+                .map(|t| format!("T{}", t))
+                .unwrap_or_else(|| "-".to_string());
+            let be_colored = match be_val {
+                Some(t) if t <= 10 => be_str.green().to_string(),
+                Some(t) if t <= 20 => be_str.yellow().to_string(),
+                Some(_) => be_str.red().to_string(),
+                None => be_str.dimmed().to_string(),
+            };
+
+            let project_display = if session.project.len() > 21 {
+                format!("...{}", &session.project[session.project.len() - 18..])
+            } else {
+                session.project.clone()
+            };
+
+            let churn_pct = if session.total_cache_write_tokens > 0 {
+                format!(
+                    "{:.0}%",
+                    session.normal_churn_tokens as f64 / session.total_cache_write_tokens as f64
+                        * 100.0
+                )
+            } else {
+                "-".to_string()
+            };
+
+            println!(
+                "{:<10} {:<22} {:>5} {:>5} {:>4} {:>9} {:>9} {:>9} {:>6} {:>7}",
+                short_id.cyan(),
+                project_display,
+                hit_pct,
+                warm,
+                be_colored,
+                format_tokens(session.ttl_5m_miss_tokens),
+                format_tokens(session.ttl_60m_miss_tokens),
+                format_tokens(session.cold_start_tokens),
+                churn_pct,
+                format!("${:.2}", write_cost(session.total_cache_write_tokens))
+            );
+        }
     }
+
+    // Project aggregates table
+    let top_p = top_projects.min(analysis.project_aggregates.len());
+    if top_p > 0 {
+        println!(
+            "\n{}",
+            format!("Top {} Projects by Cache Write Cost", top_p).bold()
+        );
+        println!("{}", "─".repeat(96));
+
+        let header = format!(
+            "{:<24} {:>4} {:>5} {:>8} {:>9} {:>9} {:>6} {:>7}",
+            "Project", "Sess", "Hit%", "Cold", "5m Miss", "60m Miss", "Churn%", "Write$"
+        );
+        println!("{}", header.bold());
+        println!(
+            "{} {} {} {} {} {} {} {}",
+            "─".repeat(24),
+            "─".repeat(4),
+            "─".repeat(5),
+            "─".repeat(8),
+            "─".repeat(9),
+            "─".repeat(9),
+            "─".repeat(6),
+            "─".repeat(7)
+        );
+
+        for agg in analysis.project_aggregates.iter().take(top_p) {
+            let project_display = if agg.project.len() > 23 {
+                format!("...{}", &agg.project[agg.project.len() - 20..])
+            } else {
+                agg.project.clone()
+            };
+
+            let churn_pct = if agg.total_writes > 0 {
+                format!(
+                    "{:.0}%",
+                    agg.total_normal_churn as f64 / agg.total_writes as f64 * 100.0
+                )
+            } else {
+                "-".to_string()
+            };
+
+            println!(
+                "{:<24} {:>4} {:>5} {:>8} {:>9} {:>9} {:>6} {:>7}",
+                project_display,
+                agg.session_count,
+                format!("{:.1}%", agg.hit_rate_pct),
+                format_tokens(agg.total_cold_start),
+                format_tokens(agg.total_5m_miss),
+                format_tokens(agg.total_60m_miss),
+                churn_pct,
+                format!("${:.2}", write_cost(agg.total_writes))
+            );
+        }
+    }
+
     println!();
 }
