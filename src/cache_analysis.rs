@@ -575,6 +575,18 @@ pub fn display_cache_analysis(
         format_tokens(analysis.total_cache_reads),
         read_cost(analysis.total_cache_reads)
     );
+    let overall_total = analysis.total_cache_writes + analysis.total_cache_reads;
+    let overall_hit_rate = if overall_total > 0 {
+        analysis.total_cache_reads as f64 / overall_total as f64 * 100.0
+    } else {
+        0.0
+    };
+    println!("  {}", "─".repeat(40));
+    println!(
+        "  {:<16} {:>7.1}%",
+        "Avg hit rate:".bold(),
+        overall_hit_rate
+    );
 
     let threshold_pct = (warmup_threshold * 100.0) as u32;
     println!(
