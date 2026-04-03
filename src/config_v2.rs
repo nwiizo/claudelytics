@@ -56,8 +56,6 @@ pub struct DisplayConfig {
 pub struct PerformanceConfig {
     /// 並列処理のワーカー数（0 = CPU数と同じ）
     pub parallel_workers: usize,
-    /// ファイル監視の間隔（秒）
-    pub watch_interval_seconds: u64,
     /// メモリ使用量の制限（MB）
     pub memory_limit_mb: Option<usize>,
     /// キャッシュの有効期間（秒）
@@ -129,7 +127,6 @@ pub enum DefaultCommand {
     Tui,
     AdvancedTui,
     Cost,
-    Watch,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -184,7 +181,6 @@ impl Default for PerformanceConfig {
     fn default() -> Self {
         Self {
             parallel_workers: 0, // 0 means use number of CPUs
-            watch_interval_seconds: 5,
             memory_limit_mb: None,
             cache_duration_seconds: 300, // 5 minutes
         }
@@ -246,7 +242,6 @@ impl fmt::Display for DefaultCommand {
             DefaultCommand::Tui => write!(f, "tui"),
             DefaultCommand::AdvancedTui => write!(f, "advanced-tui"),
             DefaultCommand::Cost => write!(f, "cost"),
-            DefaultCommand::Watch => write!(f, "watch"),
         }
     }
 }
@@ -363,13 +358,6 @@ impl AppConfig {
             ));
         }
 
-        if self.performance.watch_interval_seconds == 0 {
-            return Err(ClaudelyticsError::validation_error(
-                "watch_interval_seconds",
-                "Watch interval must be greater than 0",
-            ));
-        }
-
         if let Some(memory_limit) = self.performance.memory_limit_mb
             && memory_limit < 100
         {
@@ -475,7 +463,7 @@ mod tests {
     #[test]
     fn test_config_validation() {
         let mut config = AppConfig::default();
-        config.performance.watch_interval_seconds = 0;
+        config.performance.parallel_workers = 1001;
 
         let result = config.validate();
         assert!(result.is_err());

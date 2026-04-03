@@ -37,7 +37,6 @@ mod state;
 mod terminal;
 mod tui;
 mod tui_visuals;
-mod watcher;
 
 // Core dependencies
 use anyhow::Result;
@@ -45,12 +44,11 @@ use chrono::Local;
 use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use display::{
-    display_billing_blocks_responsive, display_daily_report_enhanced, display_daily_report_json,
+    display_billing_blocks_responsive, display_daily_report_enhanced,
     display_daily_report_responsive, display_daily_report_table, display_model_breakdown_report,
-    display_monthly_report_enhanced, display_monthly_report_json, display_monthly_report_table,
-    display_session_report_enhanced, display_session_report_json,
-    display_session_report_responsive, display_session_report_table, print_error, print_info,
-    print_warning,
+    display_monthly_report_enhanced, display_monthly_report_table, display_report_json,
+    display_session_report_enhanced, display_session_report_responsive,
+    display_session_report_table, print_error, print_info, print_warning,
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
 use models::SessionUsageMap;
@@ -64,7 +62,6 @@ use session_blocks::{SessionBlockConfig, SessionBlockManager};
 use state::{TuiMode, TuiSessionState};
 use std::path::{Path, PathBuf};
 use tui::TuiApp;
-use watcher::UsageWatcher;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum CliCostMode {
@@ -336,11 +333,6 @@ enum Commands {
         )]
         sort_order: Option<SortOrder>,
     },
-    #[command(about = "Watch for real-time usage updates", hide = true)]
-    #[command(
-        long_about = "Monitor Claude Code usage in real-time\n\nWatches the Claude directory for new usage data and displays\nupdates as they occur. Useful for monitoring active sessions.\n\nFEATURES:\n  - Real-time file monitoring\n  - Automatic data refresh\n  - Debounced updates (avoids spam)\n  - Graceful interruption with Ctrl+C\n\nEXAMPLE:\n  claudelytics watch                    # Start monitoring"
-    )]
-    Watch,
     #[command(about = "Launch terminal user interface")]
     #[command(
         long_about = "Launch interactive terminal user interface\n\nFull-featured TUI with multiple tabs, navigation, and visual charts.\nProvides comprehensive analysis in a terminal-based interface.\n\nFEATURES:\n  - Multiple tabs: Overview, Daily, Sessions, Charts, Help\n  - Keyboard navigation (j/k, arrows, Enter, Tab)\n  - Visual elements: gauges, charts, formatted tables\n  - Search and filtering capabilities\n  - Real-time data display\n\nKEYBOARD SHORTCUTS:\n  q/Esc: Quit  Tab: Next tab  j/k: Navigate  Enter: Select\n\nEXAMPLE:\n  claudelytics tui                      # Launch TUI"
@@ -424,7 +416,7 @@ enum Commands {
     },
     #[command(about = "Manage configuration")]
     #[command(
-        long_about = "Manage Claudelytics configuration settings\n\nConfiguration is stored in YAML format and persists between runs.\nUse --show to view current settings or modify specific options.\n\nCONFIG LOCATION:\n  ~/.config/claudelytics/config.yaml (or platform equivalent)\n\nAVAILABLE SETTINGS:\n  - Claude directory path\n  - Default output format (enhanced/classic/json)\n  - Default command\n  - Watch interval for real-time monitoring\n  - Export directory\n  - Date format preferences\n\nEXAMPLES:\n  claudelytics config --show            # View current configuration\n  claudelytics config --set-path ~/claude # Set custom Claude directory\n  claudelytics config --reset           # Reset to defaults"
+        long_about = "Manage Claudelytics configuration settings\n\nConfiguration is stored in YAML format and persists between runs.\nUse --show to view current settings or modify specific options.\n\nCONFIG LOCATION:\n  ~/.config/claudelytics/config.yaml (or platform equivalent)\n\nAVAILABLE SETTINGS:\n  - Claude directory path\n  - Default output format (enhanced/classic/json)\n  - Default command\n  - Export directory\n  - Date format preferences\n\nEXAMPLES:\n  claudelytics config --show            # View current configuration\n  claudelytics config --set-path ~/claude # Set custom Claude directory\n  claudelytics config --reset           # Reset to defaults"
     )]
     Config {
         #[arg(
@@ -583,7 +575,7 @@ enum Commands {
     },
     #[command(about = "Show session blocks (configurable time windows)", hide = true)]
     #[command(
-        long_about = "Analyze usage in configurable session blocks\n\nSession blocks provide flexible time-based analysis similar to billing blocks\nbut with customizable durations. Default is 8-hour blocks.\n\nFEATURES:\n  - Configurable block duration (default: 8 hours)\n  - Active session tracking with burn rate\n  - Usage projections based on current activity\n  - Time to limit calculations\n\nEXAMPLES:\n  claudelytics blocks                  # Show all session blocks\n  claudelytics blocks --active         # Show only active sessions\n  claudelytics blocks --length 4       # Use 4-hour blocks\n  claudelytics blocks --recent         # Show last 30 days\n  claudelytics blocks --live           # Live monitoring mode"
+        long_about = "Analyze usage in configurable session blocks\n\nSession blocks provide flexible time-based analysis similar to billing blocks\nbut with customizable durations. Default is 8-hour blocks.\n\nFor real-time monitoring, use `claudelytics live`.\n\nFEATURES:\n  - Configurable block duration (default: 8 hours)\n  - Active session tracking with burn rate\n  - Usage projections based on current activity\n  - Time to limit calculations\n\nEXAMPLES:\n  claudelytics blocks                  # Show all session blocks\n  claudelytics blocks --active         # Show only active sessions\n  claudelytics blocks --length 4       # Use 4-hour blocks\n  claudelytics blocks --recent         # Show last 30 days"
     )]
     Blocks {
         #[arg(
@@ -605,19 +597,6 @@ enum Commands {
             long_help = "Display only blocks from the last 30 days"
         )]
         recent: bool,
-        #[arg(
-            long,
-            help = "Live monitoring mode",
-            long_help = "Continuously monitor and update session blocks"
-        )]
-        live: bool,
-        #[arg(
-            long,
-            help = "Refresh interval in seconds (for live mode)",
-            long_help = "How often to refresh data in live mode (default: 5 seconds)",
-            default_value = "5"
-        )]
-        refresh: u64,
         #[arg(
             long,
             help = "Token limit for warnings",
@@ -1091,12 +1070,6 @@ fn run() -> Result<()> {
         cli.cost_mode.into(),
     )?;
 
-    // Handle watch command
-    if let Some(Commands::Watch) = &cli.command {
-        let mut watcher = UsageWatcher::new(parser)?;
-        return watcher.watch(&claude_dir);
-    }
-
     // Parse all usage data
     let (daily_map, session_map, billing_manager) = parser.parse_all()?;
 
@@ -1212,7 +1185,7 @@ fn run() -> Result<()> {
             if daily_report.daily.is_empty() {
                 print_warning("No daily usage data found for the specified date range");
             } else if cli.json {
-                display_daily_report_json(&daily_report);
+                display_report_json(&daily_report);
             } else if cli.responsive {
                 display_daily_report_responsive(&daily_report);
             } else if cli.classic || classic {
@@ -1254,7 +1227,7 @@ fn run() -> Result<()> {
             if session_report.sessions.is_empty() {
                 print_warning("No session usage data found for the specified date range");
             } else if cli.json {
-                display_session_report_json(&session_report);
+                display_report_json(&session_report);
             } else if cli.responsive {
                 display_session_report_responsive(&session_report);
             } else if cli.classic || classic {
@@ -1292,7 +1265,7 @@ fn run() -> Result<()> {
             if monthly_report.monthly.is_empty() {
                 print_warning("No monthly usage data found for the specified date range");
             } else if cli.json {
-                display_monthly_report_json(&monthly_report);
+                display_report_json(&monthly_report);
             } else if cli.classic || classic {
                 display_monthly_report_table(&monthly_report);
             } else {
@@ -1327,7 +1300,7 @@ fn run() -> Result<()> {
             if weekly_report.weekly.is_empty() {
                 print_warning("No weekly usage data found for the specified date range");
             } else if cli.json {
-                display::display_weekly_report_json(&weekly_report);
+                display::display_report_json(&weekly_report);
             } else if cli.classic || classic {
                 display::display_weekly_report_table(&weekly_report);
             } else {
@@ -1370,8 +1343,6 @@ fn run() -> Result<()> {
             active,
             length,
             recent,
-            live,
-            refresh,
             token_limit,
             cost_limit,
         } => {
@@ -1381,8 +1352,6 @@ fn run() -> Result<()> {
                     active,
                     length,
                     recent,
-                    live,
-                    refresh,
                     token_limit,
                     cost_limit,
                     since: since_date.clone(),
@@ -1704,7 +1673,6 @@ fn handle_config_command(
         println!("Claude Path: {:?}", config.claude_path);
         println!("Default Output Format: {:?}", config.default_output_format);
         println!("Default Command: {:?}", config.default_command);
-        println!("Watch Interval: {}s", config.watch_interval_seconds);
         println!("Export Directory: {:?}", config.export_directory);
         println!("Date Format: {}", config.date_format);
         println!("Config File: {:?}", Config::config_path()?);
@@ -2230,8 +2198,6 @@ struct BlocksCommandOptions {
     active: bool,
     length: i64,
     recent: bool,
-    live: bool,
-    refresh: u64,
     token_limit: Option<u64>,
     cost_limit: Option<f64>,
     since: Option<String>,
@@ -2241,8 +2207,6 @@ struct BlocksCommandOptions {
 /// Handle session blocks command
 fn handle_blocks_command(claude_dir: &Path, options: BlocksCommandOptions) -> Result<()> {
     use colored::Colorize;
-    use std::thread;
-    use std::time::Duration;
 
     // Create session block configuration
     let config = SessionBlockConfig {
@@ -2251,140 +2215,125 @@ fn handle_blocks_command(claude_dir: &Path, options: BlocksCommandOptions) -> Re
         cost_limit: options.cost_limit,
     };
 
-    loop {
-        // Parse usage data
-        let parser = UsageParser::new(
-            claude_dir.to_path_buf(),
-            options.since.clone(),
-            options.until.clone(),
-            None, // No model filter for session blocks
-        )?;
-        let (_daily_map, session_map, _billing_manager) = parser.parse_all()?;
+    // Parse usage data
+    let parser = UsageParser::new(
+        claude_dir.to_path_buf(),
+        options.since.clone(),
+        options.until.clone(),
+        None, // No model filter for session blocks
+    )?;
+    let (_daily_map, session_map, _billing_manager) = parser.parse_all()?;
 
-        // Create session block manager
-        let mut block_manager = SessionBlockManager::new(config.clone());
+    // Create session block manager
+    let mut block_manager = SessionBlockManager::new(config.clone());
 
-        // Add all usage records to blocks
-        // We need to iterate through the session map to get timestamps
-        for (session_path, (usage, last_activity)) in &session_map {
-            block_manager.add_usage(*last_activity, usage, session_path);
-        }
+    // Add all usage records to blocks
+    for (session_path, (usage, last_activity)) in &session_map {
+        block_manager.add_usage(*last_activity, usage, session_path);
+    }
 
-        // Generate report
-        let report = block_manager.generate_report();
+    // Generate report
+    let report = block_manager.generate_report();
 
-        // Clear screen for live mode
-        if options.live {
-            print!("\x1B[2J\x1B[1;1H");
-        }
+    // Display header
+    println!("\n{}", "📊 Session Blocks Analysis".bold().cyan());
+    println!("{}", "═".repeat(50).blue());
+    println!("Block Duration: {} hours", options.length);
+    if let Some(limit) = options.token_limit {
+        println!("Token Limit: {}", format_number(limit));
+    }
+    if let Some(limit) = options.cost_limit {
+        println!("Cost Limit: ${:.2}", limit);
+    }
+    println!();
 
-        // Display header
-        println!("\n{}", "📊 Session Blocks Analysis".bold().cyan());
-        println!("{}", "═".repeat(50).blue());
-        println!("Block Duration: {} hours", options.length);
-        if let Some(limit) = options.token_limit {
-            println!("Token Limit: {}", format_number(limit));
-        }
-        if let Some(limit) = options.cost_limit {
-            println!("Cost Limit: ${:.2}", limit);
-        }
-        println!();
+    // Filter blocks based on flags
+    let blocks_to_show: Vec<_> = if options.active {
+        report.blocks.iter().filter(|b| b.is_active).collect()
+    } else if options.recent {
+        let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
+        report
+            .blocks
+            .iter()
+            .filter(|b| b.start_time > cutoff)
+            .collect()
+    } else {
+        report.blocks.iter().collect()
+    };
 
-        // Filter blocks based on flags
-        let blocks_to_show: Vec<_> = if options.active {
-            report.blocks.iter().filter(|b| b.is_active).collect()
-        } else if options.recent {
-            let cutoff = chrono::Utc::now() - chrono::Duration::days(30);
-            report
-                .blocks
-                .iter()
-                .filter(|b| b.start_time > cutoff)
-                .collect()
-        } else {
-            report.blocks.iter().collect()
-        };
+    if blocks_to_show.is_empty() {
+        print_warning("No session blocks found matching criteria");
+    } else {
+        // Sort blocks by start time (newest first)
+        let mut sorted_blocks = blocks_to_show;
+        sorted_blocks.sort_by(|a, b| b.start_time.cmp(&a.start_time));
 
-        if blocks_to_show.is_empty() {
-            print_warning("No session blocks found matching criteria");
-        } else {
-            // Sort blocks by start time (newest first)
-            let mut sorted_blocks = blocks_to_show;
-            sorted_blocks.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        // Display blocks
+        for block in sorted_blocks {
+            let is_active_indicator = if block.is_active { "🟢" } else { "⚪" };
+            let time_range = format!(
+                "{} - {}",
+                block.start_time.format("%Y-%m-%d %H:%M"),
+                block.end_time.format("%H:%M")
+            );
 
-            // Display blocks
-            for block in sorted_blocks {
-                let is_active_indicator = if block.is_active { "🟢" } else { "⚪" };
-                let time_range = format!(
-                    "{} - {}",
-                    block.start_time.format("%Y-%m-%d %H:%M"),
-                    block.end_time.format("%H:%M")
-                );
+            println!(
+                "{} {} │ {} tokens │ ${:.4} │ {} sessions",
+                is_active_indicator,
+                time_range.cyan(),
+                format!("{:>8}", block.usage.total_tokens()).white(),
+                block.usage.total_cost,
+                block.session_count
+            );
 
+            // Show burn rate for active blocks
+            if let Some(ref burn_rate) = block.burn_rate {
                 println!(
-                    "{} {} │ {} tokens │ ${:.4} │ {} sessions",
-                    is_active_indicator,
-                    time_range.cyan(),
-                    format!("{:>8}", block.usage.total_tokens()).white(),
-                    block.usage.total_cost,
-                    block.session_count
+                    "   ├─ Burn Rate: {} tokens/hr, ${:.2}/hr",
+                    burn_rate.tokens_per_hour as u64, burn_rate.cost_per_hour
+                );
+                println!(
+                    "   ├─ Projected Daily: {} tokens, ${:.2}",
+                    format_number(burn_rate.projected_daily_tokens),
+                    burn_rate.projected_daily_cost
                 );
 
-                // Show burn rate for active blocks
-                if let Some(ref burn_rate) = block.burn_rate {
-                    println!(
-                        "   ├─ Burn Rate: {} tokens/hr, ${:.2}/hr",
-                        burn_rate.tokens_per_hour as u64, burn_rate.cost_per_hour
-                    );
-                    println!(
-                        "   ├─ Projected Daily: {} tokens, ${:.2}",
-                        format_number(burn_rate.projected_daily_tokens),
-                        burn_rate.projected_daily_cost
-                    );
-
-                    if let Some(time_to_limit) = burn_rate.time_to_limit {
-                        let hours = time_to_limit.num_hours();
-                        let minutes = time_to_limit.num_minutes() % 60;
-                        println!("   └─ Time to Limit: {}h {}m", hours, minutes);
-                    }
+                if let Some(time_to_limit) = burn_rate.time_to_limit {
+                    let hours = time_to_limit.num_hours();
+                    let minutes = time_to_limit.num_minutes() % 60;
+                    println!("   └─ Time to Limit: {}h {}m", hours, minutes);
                 }
             }
+        }
 
-            // Show summary
-            if let Some(ref current_burn) = report.current_burn_rate {
-                println!("\n{}", "🔥 Current Burn Rate".bold().yellow());
-                println!("{}", "─".repeat(40));
-                println!(
-                    "Hourly: {} tokens, ${:.2}",
-                    current_burn.tokens_per_hour as u64, current_burn.cost_per_hour
-                );
-                println!(
-                    "Daily Projection: {} tokens, ${:.2}",
-                    format_number(current_burn.projected_daily_tokens),
-                    current_burn.projected_daily_cost
-                );
-                println!(
-                    "Monthly Projection: ${:.2}",
-                    current_burn.projected_monthly_cost
-                );
-            }
-
-            println!("\n{}", "📈 Summary".bold().cyan());
+        // Show summary
+        if let Some(ref current_burn) = report.current_burn_rate {
+            println!("\n{}", "🔥 Current Burn Rate".bold().yellow());
             println!("{}", "─".repeat(40));
-            println!("Total Blocks: {}", report.total_blocks);
-            println!("Active Blocks: {}", report.active_blocks);
             println!(
-                "Total Tokens: {}",
-                format_number(report.total_usage.total_tokens())
+                "Hourly: {} tokens, ${:.2}",
+                current_burn.tokens_per_hour as u64, current_burn.cost_per_hour
             );
-            println!("Total Cost: ${:.4}", report.total_usage.total_cost);
+            println!(
+                "Daily Projection: {} tokens, ${:.2}",
+                format_number(current_burn.projected_daily_tokens),
+                current_burn.projected_daily_cost
+            );
+            println!(
+                "Monthly Projection: ${:.2}",
+                current_burn.projected_monthly_cost
+            );
         }
 
-        if !options.live {
-            break;
-        }
-
-        // Wait before refresh
-        thread::sleep(Duration::from_secs(options.refresh));
+        println!("\n{}", "📈 Summary".bold().cyan());
+        println!("{}", "─".repeat(40));
+        println!("Total Blocks: {}", report.total_blocks);
+        println!("Active Blocks: {}", report.active_blocks);
+        println!(
+            "Total Tokens: {}",
+            format_number(report.total_usage.total_tokens())
+        );
+        println!("Total Cost: ${:.4}", report.total_usage.total_cost);
     }
 
     Ok(())

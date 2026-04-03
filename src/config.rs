@@ -9,7 +9,6 @@ use std::path::PathBuf;
 /// - Claude directory location
 /// - Default output format (enhanced/classic/json)
 /// - Default command to run
-/// - Watch interval for real-time monitoring
 /// - Export directory for CSV files
 /// - Date format preferences
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -20,8 +19,6 @@ pub struct Config {
     pub default_output_format: OutputFormat,
     /// Default command to execute when none specified
     pub default_command: DefaultCommand,
-    /// Interval in seconds for watch mode file monitoring
-    pub watch_interval_seconds: u64,
     /// Directory for CSV exports (default: current directory)
     pub export_directory: Option<PathBuf>,
     /// Date format string for display (strftime format)
@@ -60,7 +57,6 @@ impl Default for Config {
             claude_path: None,
             default_output_format: OutputFormat::Enhanced,
             default_command: DefaultCommand::Daily,
-            watch_interval_seconds: 5,
             export_directory: None,
             date_format: "%Y-%m-%d".to_string(),
         }

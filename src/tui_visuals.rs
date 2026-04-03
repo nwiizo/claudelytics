@@ -305,46 +305,32 @@ pub enum ToastPosition {
 }
 
 impl ToastNotification {
-    pub fn success(message: String) -> Self {
+    fn new_with_type(message: String, toast_type: ToastType, duration_secs: u64) -> Self {
         Self {
             message,
-            toast_type: ToastType::Success,
+            toast_type,
             created_at: Instant::now(),
-            duration: Duration::from_secs(3),
+            duration: Duration::from_secs(duration_secs),
             position: ToastPosition::TopRight,
         }
     }
 
+    pub fn success(message: String) -> Self {
+        Self::new_with_type(message, ToastType::Success, 3)
+    }
+
     pub fn info(message: String) -> Self {
-        Self {
-            message,
-            toast_type: ToastType::Info,
-            created_at: Instant::now(),
-            duration: Duration::from_secs(3),
-            position: ToastPosition::TopRight,
-        }
+        Self::new_with_type(message, ToastType::Info, 3)
     }
 
     #[allow(dead_code)]
     pub fn warning(message: String) -> Self {
-        Self {
-            message,
-            toast_type: ToastType::Warning,
-            created_at: Instant::now(),
-            duration: Duration::from_secs(4),
-            position: ToastPosition::TopRight,
-        }
+        Self::new_with_type(message, ToastType::Warning, 4)
     }
 
     #[allow(dead_code)]
     pub fn error(message: String) -> Self {
-        Self {
-            message,
-            toast_type: ToastType::Error,
-            created_at: Instant::now(),
-            duration: Duration::from_secs(5),
-            position: ToastPosition::TopRight,
-        }
+        Self::new_with_type(message, ToastType::Error, 5)
     }
 
     pub fn is_active(&self) -> bool {

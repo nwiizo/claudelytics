@@ -942,14 +942,7 @@ pub fn display_session_report_table(report: &SessionReport) {
     println!("{}", table);
 }
 
-pub fn display_daily_report_json(report: &DailyReport) {
-    match serde_json::to_string_pretty(report) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("Error serializing report to JSON: {}", e),
-    }
-}
-
-pub fn display_session_report_json(report: &SessionReport) {
+pub fn display_report_json<T: serde::Serialize>(report: &T) {
     match serde_json::to_string_pretty(report) {
         Ok(json) => println!("{}", json),
         Err(e) => eprintln!("Error serializing report to JSON: {}", e),
@@ -984,13 +977,6 @@ pub fn display_monthly_report_enhanced(report: &MonthlyReport) {
 pub fn display_monthly_report_table(report: &MonthlyReport) {
     println!("{}", "Monthly Usage Report".bold());
     display_monthly_table(report);
-}
-
-pub fn display_monthly_report_json(report: &MonthlyReport) {
-    match serde_json::to_string_pretty(report) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("Error serializing report to JSON: {}", e),
-    }
 }
 
 fn display_monthly_table(report: &MonthlyReport) {
@@ -1281,13 +1267,6 @@ pub fn display_weekly_report_enhanced(report: &WeeklyReport) {
 pub fn display_weekly_report_table(report: &WeeklyReport) {
     println!("{}", "Weekly Usage Report".bold());
     display_weekly_table(report);
-}
-
-pub fn display_weekly_report_json(report: &WeeklyReport) {
-    match serde_json::to_string_pretty(report) {
-        Ok(json) => println!("{}", json),
-        Err(e) => eprintln!("Error serializing report to JSON: {}", e),
-    }
 }
 
 fn display_weekly_table(report: &WeeklyReport) {
