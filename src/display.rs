@@ -126,12 +126,15 @@ fn display_enhanced_summary_card(totals: &crate::models::TokenUsageTotals, days_
     } else {
         0.0
     };
-    let cache_efficiency = if (totals.cache_read_tokens + totals.input_tokens) > 0 {
-        totals.cache_read_tokens as f64 / (totals.cache_read_tokens + totals.input_tokens) as f64
-            * 100.0
-    } else {
-        0.0
-    };
+    let cache_efficiency =
+        if (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens) > 0 {
+            totals.cache_read_tokens as f64
+                / (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens)
+                    as f64
+                * 100.0
+        } else {
+            0.0
+        };
 
     println!("{}", "💰 COST & USAGE SUMMARY".bright_yellow().bold());
     println!("┌─────────────────────────────────────────────────────────────────────────────┐");
@@ -185,12 +188,15 @@ fn display_summary_card(totals: &crate::models::TokenUsageTotals, days_count: us
     } else {
         0.0
     };
-    let cache_efficiency = if (totals.cache_read_tokens + totals.input_tokens) > 0 {
-        totals.cache_read_tokens as f64 / (totals.cache_read_tokens + totals.input_tokens) as f64
-            * 100.0
-    } else {
-        0.0
-    };
+    let cache_efficiency =
+        if (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens) > 0 {
+            totals.cache_read_tokens as f64
+                / (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens)
+                    as f64
+                * 100.0
+        } else {
+            0.0
+        };
 
     // Fixed width for consistent alignment
     let box_width = 95;
@@ -520,9 +526,14 @@ fn display_enhanced_top_sessions(sessions: &[crate::models::SessionUsage]) {
             0.0
         };
 
-        let cache_percentage = if (session.cache_read_tokens + session.input_tokens) > 0 {
+        let cache_percentage = if (session.cache_read_tokens
+            + session.cache_creation_tokens
+            + session.input_tokens)
+            > 0
+        {
             session.cache_read_tokens as f64
-                / (session.cache_read_tokens + session.input_tokens) as f64
+                / (session.cache_read_tokens + session.cache_creation_tokens + session.input_tokens)
+                    as f64
                 * 100.0
         } else {
             0.0
@@ -579,11 +590,14 @@ fn display_daily_cards(daily: &[crate::models::DailyUsage]) {
         } else {
             0.0
         };
-        let cache_efficiency = if (day.cache_read_tokens + day.input_tokens) > 0 {
-            day.cache_read_tokens as f64 / (day.cache_read_tokens + day.input_tokens) as f64 * 100.0
-        } else {
-            0.0
-        };
+        let cache_efficiency =
+            if (day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens) > 0 {
+                day.cache_read_tokens as f64
+                    / (day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens) as f64
+                    * 100.0
+            } else {
+                0.0
+            };
 
         println!("{} {}", title_emoji, date_text);
         println!(
@@ -662,12 +676,15 @@ fn display_daily_table_compact(report: &DailyReport, force_compact: bool) {
         } else {
             0.0
         };
-        let cache_efficiency = if (daily.cache_read_tokens + daily.input_tokens) > 0 {
-            daily.cache_read_tokens as f64 / (daily.cache_read_tokens + daily.input_tokens) as f64
-                * 100.0
-        } else {
-            0.0
-        };
+        let cache_efficiency =
+            if (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) > 0 {
+                daily.cache_read_tokens as f64
+                    / (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens)
+                        as f64
+                    * 100.0
+            } else {
+                0.0
+            };
 
         let mut row = vec![
             Cell::new(&daily.date).fg(date_color),
@@ -732,12 +749,15 @@ fn display_daily_table_complete(report: &DailyReport) {
         } else {
             0.0
         };
-        let cache_efficiency = if (daily.cache_read_tokens + daily.input_tokens) > 0 {
-            daily.cache_read_tokens as f64 / (daily.cache_read_tokens + daily.input_tokens) as f64
-                * 100.0
-        } else {
-            0.0
-        };
+        let cache_efficiency =
+            if (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens) > 0 {
+                daily.cache_read_tokens as f64
+                    / (daily.cache_read_tokens + daily.cache_creation_tokens + daily.input_tokens)
+                        as f64
+                    * 100.0
+            } else {
+                0.0
+            };
 
         let row = vec![
             Cell::new(&daily.date).fg(date_color),
