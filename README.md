@@ -72,16 +72,16 @@ sudo cp target/release/claudelytics /usr/local/bin/
 
 ```bash
 # Download and run install script
-curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/scripts/install.sh | bash
 
 # Install to custom directory
-curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash -s -- --dir ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/scripts/install.sh | bash -s -- --dir ~/.local/bin
 
 # Install specific version
-curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash -s -- --version v0.4.3
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/scripts/install.sh | bash -s -- --version v0.4.3
 
 # View install options
-curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash -s -- --help
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/scripts/install.sh | bash -s -- --help
 ```
 
 The install script:

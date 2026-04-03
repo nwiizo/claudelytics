@@ -8,12 +8,12 @@ echo
 
 # Test 1: Help option
 echo "Test 1: Testing --help option"
-./install.sh --help
+./scripts/install.sh --help
 echo
 
 # Test 2: Show what would be installed (dry run)
 echo "Test 2: Testing platform detection"
-./install.sh --dir /tmp/test-claudelytics --version v0.4.3 || true
+./scripts/install.sh --dir /tmp/test-claudelytics --version v0.4.3 || true
 echo
 
 # Clean up

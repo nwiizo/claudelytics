@@ -44,10 +44,10 @@ For a quick installation without Homebrew:
 
 ```bash
 # Install latest version
-curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/scripts/install.sh | bash
 
 # Or with custom install directory
-CLAUDELYTICS_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/install.sh | bash
+CLAUDELYTICS_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com/nwiizo/claudelytics/main/scripts/install.sh | bash
 ```
 
 ### What the script does:
