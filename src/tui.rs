@@ -167,6 +167,9 @@ pub struct TuiApp {
     // Cache analysis (computed lazily)
     cache_analysis: Option<CacheAnalysis>,
     cache_table_state: TableState,
+    // Session summary cache: session_id -> first user message
+    session_summaries: std::collections::HashMap<String, String>,
+    session_summaries_loaded: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +282,8 @@ impl TuiApp {
             weekly_table_state: TableState::default(),
             cache_analysis: None,
             cache_table_state: TableState::default(),
+            session_summaries: std::collections::HashMap::new(),
+            session_summaries_loaded: false,
         };
 
         // Apply initial filters and sorting
@@ -2565,27 +2570,33 @@ impl TuiApp {
             Span::styled(" Refresh", Style::default().fg(Color::White)),
         ]);
 
+        let sort_label = match self.sort_mode {
+            SortMode::Date => "Date",
+            SortMode::Cost => "Cost",
+            SortMode::Tokens => "Tokens",
+            SortMode::Efficiency => "Efficiency",
+            SortMode::Project => "Date",
+        };
+
         let controls = Paragraph::new(controls_text)
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title("📅 Daily Report"),
+                    .title(format!("📅 Daily Report [Sort: {}]", sort_label)),
             )
             .wrap(Wrap { trim: true });
         f.render_widget(controls, chunks[0]);
 
         // Enhanced table with color coding
-        let header_cells = [
-            "Date", "Cost", "Tokens", "Input", "Output", "Cache", "Ratio",
-        ]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+        let header_cells = ["Date", "Cost", "Tokens", "Input", "Output", "Cache", "Hit%"]
+            .iter()
+            .map(|h| {
+                Cell::from(*h).style(
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )
+            });
         let header = Row::new(header_cells).height(1).bottom_margin(1);
 
         let rows = self.daily_report.daily.iter().enumerate().map(|(i, day)| {
@@ -2597,8 +2608,9 @@ impl TuiApp {
                 Style::default().fg(Color::White)
             };
 
-            let ratio = if day.input_tokens > 0 {
-                day.output_tokens as f64 / day.input_tokens as f64
+            let cache_denom = day.cache_read_tokens + day.cache_creation_tokens + day.input_tokens;
+            let cache_hit_pct = if cache_denom > 0 {
+                day.cache_read_tokens as f64 / cache_denom as f64 * 100.0
             } else {
                 0.0
             };
@@ -2610,6 +2622,14 @@ impl TuiApp {
                 Color::Yellow
             } else {
                 Color::Green
+            };
+
+            let hit_color = if cache_hit_pct > 95.0 {
+                Color::Green
+            } else if cache_hit_pct > 85.0 {
+                Color::Yellow
+            } else {
+                Color::Red
             };
 
             Row::new(vec![
@@ -2624,7 +2644,7 @@ impl TuiApp {
                     .style(Style::default().fg(Color::Cyan)),
                 Cell::from(self.format_number(day.cache_creation_tokens + day.cache_read_tokens))
                     .style(Style::default().fg(Color::Yellow)),
-                Cell::from(format!("{:.1}:1", ratio)).style(Style::default().fg(Color::White)),
+                Cell::from(format!("{:.1}%", cache_hit_pct)).style(Style::default().fg(hit_color)),
             ])
             .height(1)
         });
@@ -2654,9 +2674,73 @@ impl TuiApp {
         f.render_stateful_widget(table, chunks[1], &mut self.daily_table_state);
     }
 
-    fn try_find_conversation_summary(&self, _session_id: &str) -> Option<String> {
-        // Could be enhanced to actually parse Claude conversation data
-        None
+    fn load_session_summaries(&mut self) {
+        if self.session_summaries_loaded {
+            return;
+        }
+        self.session_summaries_loaded = true;
+
+        let claude_dirs = [
+            dirs::home_dir().map(|h| h.join(".claude")),
+            dirs::home_dir().map(|h| h.join(".config").join("claude")),
+        ];
+
+        for session in &self.original_session_report.sessions {
+            let session_id = &session.session_id;
+            if self.session_summaries.contains_key(session_id) {
+                continue;
+            }
+
+            // Try to find the JSONL file
+            for dir_opt in &claude_dirs {
+                let Some(dir) = dir_opt else { continue };
+                let projects_dir = dir.join("projects");
+                if !projects_dir.exists() {
+                    continue;
+                }
+                let jsonl_path = projects_dir
+                    .join(&session.project_path)
+                    .join(format!("{}.jsonl", session_id));
+                if !jsonl_path.exists() {
+                    // Try walking to find the file
+                    continue;
+                }
+
+                if let Ok(file) = std::fs::File::open(&jsonl_path) {
+                    let reader = std::io::BufReader::new(file);
+                    use std::io::BufRead;
+                    for line in reader.lines().take(20) {
+                        let Ok(line) = line else { continue };
+                        let Ok(val) = serde_json::from_str::<serde_json::Value>(&line) else {
+                            continue;
+                        };
+                        if val.get("type").and_then(|t| t.as_str()) != Some("user") {
+                            continue;
+                        }
+                        // Extract first user message text
+                        if let Some(content) = val.pointer("/message/content") {
+                            let extracted = if let Some(arr) = content.as_array() {
+                                arr.iter().find_map(|item| {
+                                    item.as_str().filter(|t| !t.trim().is_empty()).or_else(|| {
+                                        item.get("text")
+                                            .and_then(|t| t.as_str())
+                                            .filter(|t| !t.trim().is_empty())
+                                    })
+                                })
+                            } else {
+                                content.as_str().filter(|t| !t.trim().is_empty())
+                            };
+                            if let Some(text) = extracted {
+                                self.session_summaries
+                                    .insert(session_id.clone(), text.trim().to_string());
+                            }
+                        }
+                        break; // Only need first user message
+                    }
+                }
+                break; // Found the directory
+            }
+        }
     }
 
     fn ensure_weekly_report(&mut self) {
@@ -2821,6 +2905,8 @@ impl TuiApp {
     }
 
     fn render_sessions(&mut self, f: &mut Frame, area: Rect) {
+        self.load_session_summaries();
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(0)])
@@ -2868,8 +2954,20 @@ impl TuiApp {
             Span::styled(comparison_info, Style::default().fg(Color::Cyan)),
         ]);
 
+        let sort_label = match self.sort_mode {
+            SortMode::Date => "Date",
+            SortMode::Cost => "Cost",
+            SortMode::Tokens => "Tokens",
+            SortMode::Efficiency => "Efficiency",
+            SortMode::Project => "Project",
+        };
+
         let controls = Paragraph::new(controls_text)
-            .block(Block::default().borders(Borders::ALL).title("📊 Sessions"))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!("📊 Sessions [Sort: {}]", sort_label)),
+            )
             .wrap(Wrap { trim: true });
         f.render_widget(controls, chunks[0]);
 
@@ -2947,11 +3045,11 @@ impl TuiApp {
 
                 let truncated_path = self.truncate_text(&session_path, 30);
 
-                // Try to find conversation summary for this session
                 let summary = self
-                    .try_find_conversation_summary(&session.session_id)
-                    .map(|s| self.truncate_text(&s, 40))
-                    .unwrap_or_else(|| "No summary available".to_string());
+                    .session_summaries
+                    .get(&session.session_id)
+                    .map(|s| self.truncate_text(s, 40))
+                    .unwrap_or_default();
 
                 // Color code based on cost
                 let cost_color = if session.total_cost > 1.0 {
