@@ -5,7 +5,7 @@
 Claudelytics is a Rust CLI tool for analyzing Claude Code usage patterns and costs.
 Parses JSONL from `~/.claude/projects/` and `~/.config/claude/projects/`.
 
-**Current Version**: 0.6.1
+**Current Version**: 0.6.2
 
 ## Commands
 
