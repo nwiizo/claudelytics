@@ -79,6 +79,44 @@ impl ModelsRegistry {
             version: Some("3.0".to_string()),
             release_date: Some("2024-03-07".to_string()),
         });
+
+        // Claude 4.6 models
+        self.register_model(ModelInfo {
+            name: "claude-opus-4-6-20260310".to_string(),
+            aliases: vec![
+                "opus-4.6".to_string(),
+                "opus-4-6".to_string(),
+                "opus46".to_string(),
+            ],
+            family: "opus".to_string(),
+            version: Some("4.6".to_string()),
+            release_date: Some("2026-03-10".to_string()),
+        });
+
+        self.register_model(ModelInfo {
+            name: "claude-sonnet-4-6-20260310".to_string(),
+            aliases: vec![
+                "sonnet-4.6".to_string(),
+                "sonnet-4-6".to_string(),
+                "sonnet46".to_string(),
+            ],
+            family: "sonnet".to_string(),
+            version: Some("4.6".to_string()),
+            release_date: Some("2026-03-10".to_string()),
+        });
+
+        // Claude 4.5 Haiku
+        self.register_model(ModelInfo {
+            name: "claude-haiku-4-5-20251001".to_string(),
+            aliases: vec![
+                "haiku-4.5".to_string(),
+                "haiku-4-5".to_string(),
+                "haiku45".to_string(),
+            ],
+            family: "haiku".to_string(),
+            version: Some("4.5".to_string()),
+            release_date: Some("2025-10-01".to_string()),
+        });
     }
 
     pub fn register_model(&mut self, model: ModelInfo) {
@@ -102,10 +140,10 @@ impl ModelsRegistry {
         }
 
         // Check if filter is a family name
-        if self.families.contains_key(&filter_lower) {
-            if let Some(model_info) = self.get_model_info(model_name) {
-                return model_info.family.to_lowercase() == filter_lower;
-            }
+        if self.families.contains_key(&filter_lower)
+            && let Some(model_info) = self.get_model_info(model_name)
+        {
+            return model_info.family.to_lowercase() == filter_lower;
         }
 
         // Check aliases

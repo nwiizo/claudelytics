@@ -482,13 +482,13 @@ impl LiveDashboard {
                 }
 
                 // Check if approaching limits
-                if let Some(time_to_limit) = burn_rate.time_to_limit {
-                    if time_to_limit.num_hours() < 2 {
-                        alerts.push(format!(
-                            "🚨 Approaching limit in {}!",
-                            format_duration(time_to_limit)
-                        ));
-                    }
+                if let Some(time_to_limit) = burn_rate.time_to_limit
+                    && time_to_limit.num_hours() < 2
+                {
+                    alerts.push(format!(
+                        "🚨 Approaching limit in {}!",
+                        format_duration(time_to_limit)
+                    ));
                 }
             }
         }
@@ -573,7 +573,7 @@ fn format_number(num: u64) -> String {
     let mut result = String::new();
 
     for (i, c) in chars.iter().enumerate() {
-        if i > 0 && (chars.len() - i) % 3 == 0 {
+        if i > 0 && (chars.len() - i).is_multiple_of(3) {
             result.push(',');
         }
         result.push(*c);

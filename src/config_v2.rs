@@ -370,13 +370,13 @@ impl AppConfig {
             ));
         }
 
-        if let Some(memory_limit) = self.performance.memory_limit_mb {
-            if memory_limit < 100 {
-                return Err(ClaudelyticsError::validation_error(
-                    "memory_limit_mb",
-                    "Memory limit must be at least 100MB",
-                ));
-            }
+        if let Some(memory_limit) = self.performance.memory_limit_mb
+            && memory_limit < 100
+        {
+            return Err(ClaudelyticsError::validation_error(
+                "memory_limit_mb",
+                "Memory limit must be at least 100MB",
+            ));
         }
 
         Ok(())

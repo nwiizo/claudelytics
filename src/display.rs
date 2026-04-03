@@ -1,11 +1,57 @@
 use crate::burn_rate::BurnRateCalculator;
-use crate::models::{DailyReport, MonthlyReport, SessionReport};
+use crate::models::{DailyReport, MonthlyReport, SessionReport, WeeklyReport};
 use crate::responsive_tables::{ResponsiveTable, display_responsive_summary};
 use crate::terminal::{DisplayMode, Terminal};
 use chrono::Local;
 use colored::*;
 use comfy_table::{Cell, Color, Table, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL};
 // use std::io::{self, Write};
+
+/// Compact default output: a simple table like ccusage
+pub fn display_daily_report_compact(report: &DailyReport) {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_header(vec![
+            Cell::new("Date").fg(Color::Cyan),
+            Cell::new("Input").fg(Color::Green),
+            Cell::new("Output").fg(Color::Yellow),
+            Cell::new("Cache Write").fg(Color::Magenta),
+            Cell::new("Cache Read").fg(Color::Magenta),
+            Cell::new("Total Tokens").fg(Color::White),
+            Cell::new("Cost (USD)").fg(Color::Red),
+        ]);
+
+    for entry in &report.daily {
+        table.add_row(vec![
+            Cell::new(&entry.date),
+            Cell::new(format_number(entry.input_tokens)).fg(Color::Green),
+            Cell::new(format_number(entry.output_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(entry.cache_creation_tokens)).fg(Color::Magenta),
+            Cell::new(format_number(entry.cache_read_tokens)).fg(Color::Magenta),
+            Cell::new(format_number(entry.total_tokens)),
+            Cell::new(format_currency(entry.total_cost)).fg(Color::Red),
+        ]);
+    }
+
+    // Totals row
+    if report.daily.len() > 1 {
+        let cache_tokens = report.totals.cache_creation_tokens + report.totals.cache_read_tokens;
+        table.add_row(vec![
+            Cell::new("Total").fg(Color::Yellow),
+            Cell::new(format_number(report.totals.input_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.output_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.cache_creation_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.cache_read_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.total_tokens)).fg(Color::Yellow),
+            Cell::new(format_currency(report.totals.total_cost)).fg(Color::Yellow),
+        ]);
+        let _ = cache_tokens; // used above in individual cells
+    }
+
+    println!("{table}");
+}
 
 pub fn display_daily_report_enhanced(report: &DailyReport, _force_compact: bool) {
     // Header with timestamp and separator
@@ -375,6 +421,7 @@ fn display_burn_rate_metrics(daily: &[crate::models::DailyUsage]) {
             cache_creation_tokens: day.cache_creation_tokens,
             cache_read_tokens: day.cache_read_tokens,
             total_cost: day.total_cost,
+            fast_mode_cost: 0.0,
         };
         if let Ok(date) = chrono::NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
             daily_map.insert(date, usage);
@@ -1008,7 +1055,7 @@ fn format_number(num: u64) -> String {
         let mut result = String::new();
 
         for (i, c) in chars.iter().enumerate() {
-            if i > 0 && (chars.len() - i) % 3 == 0 {
+            if i > 0 && (chars.len() - i).is_multiple_of(3) {
                 result.push(',');
             }
             result.push(*c);
@@ -1210,6 +1257,85 @@ impl FamilyUsage {
         self.cache_read_tokens += usage.cache_read_tokens;
         self.total_cost += usage.total_cost;
     }
+}
+
+pub fn display_weekly_report_enhanced(report: &WeeklyReport) {
+    let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S");
+    println!("{}", "📊 Claude Code Weekly Analytics".bright_blue().bold());
+    println!(
+        "{} Generated at {}",
+        "🕐".bright_yellow(),
+        timestamp.to_string().dimmed()
+    );
+    println!();
+
+    display_summary_card(&report.totals, report.weekly.len());
+    println!();
+
+    if !report.weekly.is_empty() {
+        println!("{}", "📋 Weekly Usage Breakdown".bright_green().bold());
+        display_weekly_table(report);
+    }
+}
+
+pub fn display_weekly_report_table(report: &WeeklyReport) {
+    println!("{}", "Weekly Usage Report".bold());
+    display_weekly_table(report);
+}
+
+pub fn display_weekly_report_json(report: &WeeklyReport) {
+    match serde_json::to_string_pretty(report) {
+        Ok(json) => println!("{}", json),
+        Err(e) => eprintln!("Error serializing report to JSON: {}", e),
+    }
+}
+
+fn display_weekly_table(report: &WeeklyReport) {
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_header(vec![
+            Cell::new("Week").fg(Color::Cyan),
+            Cell::new("Days Active").fg(Color::Cyan),
+            Cell::new("Input Tokens").fg(Color::Green),
+            Cell::new("Output Tokens").fg(Color::Yellow),
+            Cell::new("Total Tokens").fg(Color::White),
+            Cell::new("Total Cost").fg(Color::Red),
+            Cell::new("Avg Daily Cost").fg(Color::DarkRed),
+        ]);
+
+    for entry in &report.weekly {
+        table.add_row(vec![
+            Cell::new(format!("{} ~ {}", &entry.week_start, &entry.week_end)),
+            Cell::new(entry.days_active),
+            Cell::new(format_number(entry.input_tokens)).fg(Color::Green),
+            Cell::new(format_number(entry.output_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(entry.total_tokens)),
+            Cell::new(format_currency(entry.total_cost)).fg(Color::Red),
+            Cell::new(format_currency(entry.avg_daily_cost)).fg(Color::DarkRed),
+        ]);
+    }
+
+    if !report.weekly.is_empty() {
+        let total_days: u32 = report.weekly.iter().map(|w| w.days_active).sum();
+        table.add_row(vec![
+            Cell::new("Total").fg(Color::Yellow),
+            Cell::new(total_days).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.input_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.output_tokens)).fg(Color::Yellow),
+            Cell::new(format_number(report.totals.total_tokens)).fg(Color::Yellow),
+            Cell::new(format_currency(report.totals.total_cost)).fg(Color::Yellow),
+            Cell::new(if total_days > 0 {
+                format_currency(report.totals.total_cost / total_days as f64)
+            } else {
+                format_currency(0.0)
+            })
+            .fg(Color::Yellow),
+        ]);
+    }
+
+    println!("{table}");
 }
 
 pub fn display_model_breakdown_report(
@@ -1477,31 +1603,41 @@ fn parse_usage_by_model()
     let registry = ModelsRegistry::new();
     let mut family_usage: HashMap<String, TokenUsage> = HashMap::new();
 
-    // Get Claude directory path (use default ~/.claude)
-    let claude_dir = std::env::var("HOME")
-        .map(|home| PathBuf::from(home).join(".claude"))
-        .map_err(|_| "Unable to determine home directory")?;
+    // Get Claude directory paths (legacy + XDG)
+    let home = std::env::var("HOME").map_err(|_| "Unable to determine home directory")?;
+    let claude_dirs = vec![
+        PathBuf::from(&home).join(".claude"),
+        PathBuf::from(&home).join(".config").join("claude"),
+    ];
 
-    let projects_dir = claude_dir.join("projects");
-    if !projects_dir.exists() {
-        return Err("Claude projects directory not found".into());
+    // Find all JSONL files across all directories
+    let mut jsonl_files: Vec<PathBuf> = Vec::new();
+    for claude_dir in &claude_dirs {
+        let projects_dir = claude_dir.join("projects");
+        if !projects_dir.exists() {
+            continue;
+        }
+
+        let files: Vec<PathBuf> = WalkDir::new(projects_dir)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().is_file())
+            .filter(|entry| {
+                entry
+                    .path()
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .map(|ext| ext == "jsonl")
+                    .unwrap_or(false)
+            })
+            .map(|entry| entry.path().to_path_buf())
+            .collect();
+        jsonl_files.extend(files);
     }
 
-    // Find all JSONL files
-    let jsonl_files: Vec<PathBuf> = WalkDir::new(projects_dir)
-        .into_iter()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().is_file())
-        .filter(|entry| {
-            entry
-                .path()
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .map(|ext| ext == "jsonl")
-                .unwrap_or(false)
-        })
-        .map(|entry| entry.path().to_path_buf())
-        .collect();
+    if jsonl_files.is_empty() {
+        return Err("Claude projects directory not found".into());
+    }
 
     // Parse each file
     for file_path in jsonl_files {
@@ -1513,24 +1649,22 @@ fn parse_usage_by_model()
                     continue;
                 }
 
-                if let Ok(record) = serde_json::from_str::<UsageRecord>(&line) {
-                    if let Some(model_name) = record.get_model_name() {
-                        if record
-                            .message
-                            .as_ref()
-                            .and_then(|m| m.usage.as_ref())
-                            .is_some()
-                        {
-                            let family = registry
-                                .get_model_family(model_name)
-                                .unwrap_or_else(|| "Unknown".to_string());
+                if let Ok(record) = serde_json::from_str::<UsageRecord>(&line)
+                    && let Some(model_name) = record.get_model_name()
+                    && record
+                        .message
+                        .as_ref()
+                        .and_then(|m| m.usage.as_ref())
+                        .is_some()
+                {
+                    let family = registry
+                        .get_model_family(model_name)
+                        .unwrap_or_else(|| "Unknown".to_string());
 
-                            let family = capitalize_family_name(&family);
+                    let family = capitalize_family_name(&family);
 
-                            let usage = TokenUsage::from(&record);
-                            family_usage.entry(family).or_default().add(&usage);
-                        }
-                    }
+                    let usage = TokenUsage::from(&record);
+                    family_usage.entry(family).or_default().add(&usage);
                 }
             }
         }

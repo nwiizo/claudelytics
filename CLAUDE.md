@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claudelytics is a Rust CLI tool for analyzing Claude Code usage patterns and costs. It parses JSONL files from the `~/.claude/projects/` directory structure and generates comprehensive reports on token usage, costs, and session analytics.
+Claudelytics is a Rust CLI tool for analyzing Claude Code usage patterns and costs. It parses JSONL files from `~/.claude/projects/` and `~/.config/claude/projects/` directories and generates comprehensive reports on token usage, costs, and session analytics.
 
-**Current Version**: 0.5.1 - Enhanced with live dashboard, responsive tables, real-time analytics, and quick install
+**Current Version**: 0.6.0
 
 ## Similarity Scanning Strategies
 
@@ -77,35 +77,29 @@ After committing:
 The project is organized into several modules:
 
 - `main.rs` - CLI entry point and command handling
-- `models.rs` - Data structures for sessions, conversations, and model pricing
-- `parser.rs` - JSONL parsing logic
-- `reports.rs` - Report generation and formatting
+- `models.rs` - Data structures for sessions, conversations, and reports
+- `parser.rs` - JSONL parsing with multi-directory support and cost mode routing
+- `pricing.rs` - Model pricing with tiered pricing and fast mode multiplier
+- `reports.rs` - Report generation (daily, weekly, monthly, session)
+- `models_registry.rs` - Model registration with aliases and family matching
 - `pricing_cache.rs` - Offline pricing data management
 - `tui.rs` - Terminal UI implementation with conversation viewing
-- `session_analytics.rs` - Session analysis and statistics
-- `conversation_parser.rs` - Full conversation content parsing (NEW)
-- `conversation_display.rs` - Conversation formatting and display (NEW)
-- `live_dashboard.rs` - Real-time token burn rate monitoring (NEW)
+- `conversation_parser.rs` - Full conversation content parsing
+- `conversation_display.rs` - Conversation formatting and display
+- `live_dashboard.rs` - Real-time token burn rate monitoring
 
 ## Key Features
 
 1. **5-Hour Billing Blocks**: Sessions are automatically grouped into 5-hour blocks for cost calculation
-2. **Offline Pricing**: Pricing data is cached locally to avoid API dependencies
+2. **Offline Pricing**: Pricing data with tiered pricing (200k threshold for 1M context models)
 3. **Interactive TUI**: Rich terminal interface for exploring usage data
-4. **Flexible Reporting**: Multiple report formats and filtering options
-5. **Conversation Viewing**: Full conversation content display with thinking blocks and tool usage (NEW)
-   - View complete conversation threads with parent/child relationships
-   - Export conversations in markdown, JSON, or text format
-   - Search within conversation content
-   - Filter by thinking blocks and tool usage
-   - Enhanced TUI with dedicated Conversations tab
-6. **Live Dashboard**: Real-time token usage monitoring with burn rate calculations (NEW)
-   - Real-time token burn rate (tokens/minute, tokens/hour)
-   - Active session progress tracking
-   - Cost projections based on current usage rate
-   - Time to reach daily/monthly limits
-   - Configurable alerts for high usage
-   - Auto-refresh display with customizable interval
+4. **Flexible Reporting**: Daily, weekly, monthly, session reports with multiple formats
+5. **Fast Mode Support**: Detects `/fast` mode usage (6x pricing multiplier)
+6. **Cost Modes**: `auto`/`calculate`/`display` for cost calculation control
+7. **XDG Support**: Reads from both `~/.claude/` and `~/.config/claude/` directories
+8. **Model Coverage**: Claude 3.x, 4, 4.5, 4.6 models with accurate pricing
+9. **Conversation Viewing**: Full conversation content display with thinking blocks and tool usage
+10. **Live Dashboard**: Real-time token usage monitoring with burn rate calculations
 
 ## Testing
 

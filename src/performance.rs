@@ -126,15 +126,14 @@ where
             .retain(|_, (_, timestamp)| now.duration_since(*timestamp) < self.ttl);
 
         // まだ容量オーバーの場合、最も古いエントリを削除
-        if self.data.len() >= self.capacity {
-            if let Some(oldest_key) = self
+        if self.data.len() >= self.capacity
+            && let Some(oldest_key) = self
                 .data
                 .iter()
                 .min_by_key(|(_, (_, timestamp))| *timestamp)
                 .map(|(k, _)| k.clone())
-            {
-                self.data.remove(&oldest_key);
-            }
+        {
+            self.data.remove(&oldest_key);
         }
     }
 }
@@ -215,13 +214,13 @@ impl<T> std::ops::DerefMut for PooledObject<T> {
 
 impl<T> Drop for PooledObject<T> {
     fn drop(&mut self) {
-        if let Some(obj) = self.object.take() {
-            if let Ok(mut objects) = self.pool.lock() {
-                objects.push(obj);
-            }
-            // If we can't acquire the lock, we simply let the object be dropped
-            // This is safer than panicking in a destructor
+        if let Some(obj) = self.object.take()
+            && let Ok(mut objects) = self.pool.lock()
+        {
+            objects.push(obj);
         }
+        // If we can't acquire the lock, we simply let the object be dropped
+        // This is safer than panicking in a destructor
     }
 }
 
@@ -319,13 +318,13 @@ impl MemoryMonitor {
             self.peak_usage = self.current_usage;
         }
 
-        if let Some(limit) = self.limit {
-            if self.current_usage > limit {
-                return Err(ClaudelyticsError::other(&format!(
-                    "Memory limit exceeded: {} MB",
-                    limit / 1024 / 1024
-                )));
-            }
+        if let Some(limit) = self.limit
+            && self.current_usage > limit
+        {
+            return Err(ClaudelyticsError::other(&format!(
+                "Memory limit exceeded: {} MB",
+                limit / 1024 / 1024
+            )));
         }
 
         Ok(())

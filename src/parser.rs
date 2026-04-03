@@ -1,47 +1,81 @@
 use crate::billing_blocks::BillingBlockManager;
 use crate::models::{DailyUsageMap, SessionUsageMap, TokenUsage, UsageRecord};
 use crate::models_registry::ModelsRegistry;
-use crate::pricing::{PricingFetcher, get_fallback_pricing};
+use crate::pricing::{FAST_MODE_MULTIPLIER, PricingFetcher, get_fallback_pricing};
 use anyhow::{Context, Result};
 use chrono::{Local, NaiveDate, TimeZone};
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use walkdir::WalkDir;
 
+/// Cost calculation mode
+#[derive(Clone, Copy, Debug, Default)]
+pub enum CostMode {
+    /// Use costUSD from JSONL if present, otherwise calculate
+    #[default]
+    Auto,
+    /// Always recalculate from token counts and pricing
+    Calculate,
+    /// Only show costUSD field from JSONL data
+    Display,
+}
+
 pub struct UsageParser {
-    claude_dir: PathBuf,
+    claude_dirs: Vec<PathBuf>,
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
     model_filter: Option<String>,
+    cost_mode: CostMode,
     pricing_fetcher: PricingFetcher,
+    fallback_pricing: HashMap<String, crate::pricing::ModelPricing>,
     models_registry: ModelsRegistry,
 }
 
 impl UsageParser {
+    /// Create a parser with a single Claude directory (backward compatible)
     pub fn new(
         claude_dir: PathBuf,
         since: Option<String>,
         until: Option<String>,
         model_filter: Option<String>,
     ) -> Result<Self> {
-        let since = since.map(|s| parse_date(&s)).transpose()?;
-        let until = until.map(|s| parse_date(&s)).transpose()?;
-
-        if let (Some(since), Some(until)) = (since, until) {
-            if since > until {
-                anyhow::bail!("Since date must be before or equal to until date");
-            }
-        }
-
-        Ok(UsageParser {
-            claude_dir,
+        Self::new_multi(
+            vec![claude_dir],
             since,
             until,
             model_filter,
+            CostMode::default(),
+        )
+    }
+
+    /// Create a parser with multiple Claude directories (supports XDG + legacy)
+    pub fn new_multi(
+        claude_dirs: Vec<PathBuf>,
+        since: Option<String>,
+        until: Option<String>,
+        model_filter: Option<String>,
+        cost_mode: CostMode,
+    ) -> Result<Self> {
+        let since = since.map(|s| parse_date(&s)).transpose()?;
+        let until = until.map(|s| parse_date(&s)).transpose()?;
+
+        if let (Some(since), Some(until)) = (since, until)
+            && since > until
+        {
+            anyhow::bail!("Since date must be before or equal to until date");
+        }
+
+        Ok(UsageParser {
+            claude_dirs,
+            since,
+            until,
+            fallback_pricing: get_fallback_pricing(),
+            model_filter,
+            cost_mode,
             pricing_fetcher: PricingFetcher::new(),
             models_registry: ModelsRegistry::new(),
         })
@@ -51,21 +85,25 @@ impl UsageParser {
         let jsonl_files = self.find_jsonl_files()?;
 
         if jsonl_files.is_empty() {
-            eprintln!(
-                "Warning: No JSONL files found in {}",
-                self.claude_dir.display()
-            );
+            let dir_list: Vec<String> = self
+                .claude_dirs
+                .iter()
+                .map(|d| d.display().to_string())
+                .collect();
+            eprintln!("Warning: No JSONL files found in {}", dir_list.join(", "));
             return Ok((HashMap::new(), HashMap::new(), BillingBlockManager::new()));
         }
 
-        // Use thread-safe billing block manager
+        // Use thread-safe billing block manager and dedup set
         let billing_manager = Arc::new(Mutex::new(BillingBlockManager::new()));
+        let dedup_set: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
         let results: Vec<(DailyUsageMap, SessionUsageMap)> = jsonl_files
             .par_iter()
             .filter_map(|file_path| {
                 let billing_manager_clone = Arc::clone(&billing_manager);
-                match self.parse_file_with_billing(file_path, billing_manager_clone) {
+                let dedup_clone = Arc::clone(&dedup_set);
+                match self.parse_file_with_billing(file_path, billing_manager_clone, dedup_clone) {
                     Ok(result) => Some(result),
                     Err(e) => {
                         eprintln!("Warning: Failed to parse {}: {}", file_path.display(), e);
@@ -106,37 +144,58 @@ impl UsageParser {
     }
 
     fn find_jsonl_files(&self) -> Result<Vec<PathBuf>> {
-        let projects_dir = self.claude_dir.join("projects");
+        let mut all_files = Vec::new();
+        let mut found_any_dir = false;
 
-        if !projects_dir.exists() {
-            anyhow::bail!(
-                "Claude directory not found at {}",
-                self.claude_dir.display()
+        for claude_dir in &self.claude_dirs {
+            let projects_dir = claude_dir.join("projects");
+            if !projects_dir.exists() {
+                continue;
+            }
+            found_any_dir = true;
+
+            let files: Vec<PathBuf> = WalkDir::new(projects_dir)
+                .into_iter()
+                .filter_map(|entry| entry.ok())
+                .filter(|entry| entry.file_type().is_file())
+                .filter(|entry| {
+                    entry
+                        .path()
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .map(|ext| ext == "jsonl")
+                        .unwrap_or(false)
+                })
+                .map(|entry| entry.path().to_path_buf())
+                .collect();
+
+            all_files.extend(files);
+        }
+
+        if !found_any_dir {
+            let dir_list: Vec<String> = self
+                .claude_dirs
+                .iter()
+                .map(|d| d.display().to_string())
+                .collect();
+            eprintln!(
+                "Warning: No Claude projects directory found in: {}",
+                dir_list.join(", ")
             );
         }
 
-        let files: Vec<PathBuf> = WalkDir::new(projects_dir)
-            .into_iter()
-            .filter_map(|entry| entry.ok())
-            .filter(|entry| entry.file_type().is_file())
-            .filter(|entry| {
-                entry
-                    .path()
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| ext == "jsonl")
-                    .unwrap_or(false)
-            })
-            .map(|entry| entry.path().to_path_buf())
-            .collect();
+        // Deduplicate by path
+        all_files.sort();
+        all_files.dedup();
 
-        Ok(files)
+        Ok(all_files)
     }
 
     fn parse_file_with_billing(
         &self,
         file_path: &Path,
         billing_manager: Arc<Mutex<BillingBlockManager>>,
+        dedup_set: Arc<Mutex<HashSet<String>>>,
     ) -> Result<(DailyUsageMap, SessionUsageMap)> {
         let file = File::open(file_path)
             .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
@@ -155,131 +214,49 @@ impl UsageParser {
 
             match serde_json::from_str::<UsageRecord>(&line) {
                 Ok(record) => {
-                    // Skip records without timestamp or usage data
-                    if let Some(timestamp) = record.timestamp {
-                        if record
-                            .message
-                            .as_ref()
-                            .and_then(|m| m.usage.as_ref())
-                            .is_some()
-                            && self.should_include_record(&record)
-                        {
-                            let mut usage = TokenUsage::from(&record);
-
-                            // Always recalculate cost to match ccusage's behavior
-                            // This ensures exact alignment with ccusage's calculation methodology
-                            if let Some(model_name) = record.get_model_name() {
-                                let calculated_cost =
-                                    self.calculate_cost_for_record(&record, model_name);
-                                if calculated_cost > 0.0 {
-                                    usage.total_cost = calculated_cost;
-                                }
-                                // If calculation fails, fall back to costUSD if available
-                                else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
-                                    usage.total_cost = record.cost_usd.unwrap_or(0.0);
-                                }
-                            }
-                            // If no model name, use costUSD if available
-                            else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
-                                usage.total_cost = record.cost_usd.unwrap_or(0.0);
-                            }
-
-                            let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
-
-                            // Add to daily map
-                            daily_map
-                                .entry(date)
-                                .or_insert_with(TokenUsage::default)
-                                .add(&usage);
-
-                            // Add to session map
-                            let session_entry = session_map
-                                .entry(session_info.clone())
-                                .or_insert((TokenUsage::default(), timestamp));
-                            session_entry.0.add(&usage);
-                            if timestamp > session_entry.1 {
-                                session_entry.1 = timestamp;
-                            }
-
-                            // Add to billing blocks
-                            if let Ok(mut manager) = billing_manager.lock() {
-                                manager.add_usage(timestamp, &usage, Some(&session_info));
-                            }
-                        }
+                    // Deduplicate by message.id:requestId (matching ccusage behavior)
+                    if let Some(hash) = record.dedup_hash()
+                        && let Ok(mut set) = dedup_set.lock()
+                        && !set.insert(hash)
+                    {
+                        continue; // Duplicate record, skip
                     }
-                }
-                Err(_) => {
-                    // Silently skip invalid JSON lines as per spec
-                    continue;
-                }
-            }
-        }
 
-        Ok((daily_map, session_map))
-    }
-
-    #[allow(dead_code)]
-    fn parse_file(&self, file_path: &Path) -> Result<(DailyUsageMap, SessionUsageMap)> {
-        let file = File::open(file_path)
-            .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
-        let reader = BufReader::new(file);
-
-        let mut daily_map = HashMap::new();
-        let mut session_map = HashMap::new();
-
-        let session_info = self.extract_session_info(file_path)?;
-
-        for line in reader.lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            match serde_json::from_str::<UsageRecord>(&line) {
-                Ok(record) => {
                     // Skip records without timestamp or usage data
-                    if let Some(timestamp) = record.timestamp {
-                        if record
+                    if let Some(timestamp) = record.timestamp
+                        && record
                             .message
                             .as_ref()
                             .and_then(|m| m.usage.as_ref())
                             .is_some()
-                            && self.should_include_record(&record)
-                        {
-                            let mut usage = TokenUsage::from(&record);
+                        && self.should_include_record(&record)
+                    {
+                        let mut usage = TokenUsage::from(&record);
+                        let is_fast = Self::is_fast_mode_record(&record);
 
-                            // Always recalculate cost to match ccusage's behavior
-                            // This ensures exact alignment with ccusage's calculation methodology
-                            if let Some(model_name) = record.get_model_name() {
-                                let calculated_cost =
-                                    self.calculate_cost_for_record(&record, model_name);
-                                if calculated_cost > 0.0 {
-                                    usage.total_cost = calculated_cost;
-                                }
-                                // If calculation fails, fall back to costUSD if available
-                                else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
-                                    usage.total_cost = record.cost_usd.unwrap_or(0.0);
-                                }
-                            }
-                            // If no model name, use costUSD if available
-                            else if usage.total_cost == 0.0 && record.cost_usd.is_some() {
-                                usage.total_cost = record.cost_usd.unwrap_or(0.0);
-                            }
+                        // Calculate cost based on cost mode
+                        self.apply_cost_mode(&mut usage, &record, is_fast);
 
-                            let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+                        let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
 
-                            daily_map
-                                .entry(date)
-                                .or_insert_with(TokenUsage::default)
-                                .add(&usage);
+                        // Add to daily map
+                        daily_map
+                            .entry(date)
+                            .or_insert_with(TokenUsage::default)
+                            .add(&usage);
 
-                            let session_entry = session_map
-                                .entry(session_info.clone())
-                                .or_insert((TokenUsage::default(), timestamp));
-                            session_entry.0.add(&usage);
-                            if timestamp > session_entry.1 {
-                                session_entry.1 = timestamp;
-                            }
+                        // Add to session map
+                        let session_entry = session_map
+                            .entry(session_info.clone())
+                            .or_insert((TokenUsage::default(), timestamp));
+                        session_entry.0.add(&usage);
+                        if timestamp > session_entry.1 {
+                            session_entry.1 = timestamp;
+                        }
+
+                        // Add to billing blocks
+                        if let Ok(mut manager) = billing_manager.lock() {
+                            manager.add_usage(timestamp, &usage, Some(&session_info));
                         }
                     }
                 }
@@ -294,28 +271,30 @@ impl UsageParser {
     }
 
     fn extract_session_info(&self, file_path: &Path) -> Result<String> {
-        let projects_dir = self.claude_dir.join("projects");
-        let relative_path = file_path
-            .strip_prefix(&projects_dir)
-            .with_context(|| "File path is not within projects directory")?;
+        for claude_dir in &self.claude_dirs {
+            let projects_dir = claude_dir.join("projects");
+            if let Ok(relative_path) = file_path.strip_prefix(&projects_dir) {
+                let mut components: Vec<&str> = relative_path
+                    .components()
+                    .filter_map(|comp| comp.as_os_str().to_str())
+                    .collect();
 
-        let mut components: Vec<&str> = relative_path
-            .components()
-            .filter_map(|comp| comp.as_os_str().to_str())
-            .collect();
+                if components.is_empty() {
+                    continue;
+                }
 
-        if components.is_empty() {
-            anyhow::bail!("Invalid file path structure");
+                // Remove the filename to get the session directory
+                components.pop();
+
+                if components.is_empty() {
+                    continue;
+                }
+
+                return Ok(components.join("/"));
+            }
         }
 
-        // Remove the filename to get the session directory
-        components.pop();
-
-        if components.is_empty() {
-            anyhow::bail!("Invalid session path structure");
-        }
-
-        Ok(components.join("/"))
+        anyhow::bail!("File path is not within any known projects directory")
     }
 
     fn should_include_record(&self, record: &UsageRecord) -> bool {
@@ -325,16 +304,16 @@ impl UsageParser {
         };
         let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
 
-        if let Some(since) = self.since {
-            if date < since {
-                return false;
-            }
+        if let Some(since) = self.since
+            && date < since
+        {
+            return false;
         }
 
-        if let Some(until) = self.until {
-            if date > until {
-                return false;
-            }
+        if let Some(until) = self.until
+            && date > until
+        {
+            return false;
         }
 
         // Apply model filter using ModelsRegistry
@@ -352,26 +331,80 @@ impl UsageParser {
         true
     }
 
+    /// Calculate cost for a single record from token counts and model pricing.
+    /// Returns cost with fast mode multiplier already applied if applicable.
     fn calculate_cost_for_record(&self, record: &UsageRecord, model_name: &str) -> f64 {
-        // Use fallback pricing for now - online fetching would be added as async feature
-        let fallback_pricing = get_fallback_pricing();
+        let fallback_pricing = &self.fallback_pricing;
 
         if let Some(pricing) = self
             .pricing_fetcher
-            .get_model_pricing(&fallback_pricing, model_name)
+            .get_model_pricing(fallback_pricing, model_name)
+            && let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref())
         {
-            if let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref()) {
-                return self.pricing_fetcher.calculate_cost(
-                    &pricing,
-                    usage.input_tokens,
-                    usage.output_tokens,
-                    usage.cache_creation_input_tokens,
-                    usage.cache_read_input_tokens,
-                );
+            let base_cost = self.pricing_fetcher.calculate_cost(
+                &pricing,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_read_input_tokens,
+            );
+
+            // Apply fast mode multiplier if speed is "fast"
+            if usage.is_fast_mode() {
+                return base_cost * FAST_MODE_MULTIPLIER;
             }
+
+            return base_cost;
         }
 
         0.0
+    }
+
+    /// Check if a record is using fast mode
+    fn is_fast_mode_record(record: &UsageRecord) -> bool {
+        record
+            .message
+            .as_ref()
+            .and_then(|m| m.usage.as_ref())
+            .map(|u| u.is_fast_mode())
+            .unwrap_or(false)
+    }
+
+    /// Apply cost based on the configured cost mode
+    fn apply_cost_mode(&self, usage: &mut TokenUsage, record: &UsageRecord, is_fast: bool) {
+        match self.cost_mode {
+            CostMode::Display => {
+                // Only use costUSD from JSONL
+                usage.total_cost = record.cost_usd.unwrap_or(0.0);
+            }
+            CostMode::Calculate => {
+                // Always recalculate from tokens - zero out any costUSD leak
+                usage.total_cost = 0.0;
+                if let Some(model_name) = record.get_model_name() {
+                    let calculated = self.calculate_cost_for_record(record, model_name);
+                    if calculated > 0.0 {
+                        usage.total_cost = calculated;
+                    }
+                }
+            }
+            CostMode::Auto => {
+                // Use costUSD if positive, otherwise calculate from tokens
+                let has_jsonl_cost = record.cost_usd.is_some_and(|c| c > 0.0);
+                if has_jsonl_cost {
+                    usage.total_cost = record.cost_usd.unwrap_or(0.0);
+                } else if let Some(model_name) = record.get_model_name() {
+                    let calculated = self.calculate_cost_for_record(record, model_name);
+                    if calculated > 0.0 {
+                        usage.total_cost = calculated;
+                    }
+                }
+            }
+        }
+
+        // Track fast mode cost separately
+        if is_fast {
+            usage.fast_mode_cost = usage.total_cost;
+        }
     }
 }
 
@@ -613,8 +646,9 @@ mod tests {
             .expect("Failed to create parser");
 
         let billing_manager = Arc::new(Mutex::new(BillingBlockManager::new()));
+        let dedup_set = Arc::new(Mutex::new(HashSet::new()));
         let (daily_map, session_map) = parser
-            .parse_file_with_billing(&file_path, billing_manager)
+            .parse_file_with_billing(&file_path, billing_manager, dedup_set)
             .expect("Failed to parse file");
 
         assert_eq!(daily_map.len(), 1);
