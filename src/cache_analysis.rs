@@ -490,6 +490,124 @@ pub fn analyze_cache(
     })
 }
 
+#[derive(Debug, Serialize)]
+pub struct CacheStatsOutput {
+    pub cold_pct: f64,
+    pub hit_pct: f64,
+    pub churn_tokens_per_turn: Option<u64>,
+    pub turn_count: usize,
+}
+
+pub fn compute_session_cache_stats(file_path: &Path, window: usize) -> CacheStatsOutput {
+    struct TurnTokens {
+        input: u64,
+        creation: u64,
+        read: u64,
+    }
+
+    let file = match File::open(file_path) {
+        Ok(f) => f,
+        Err(_) => {
+            return CacheStatsOutput {
+                cold_pct: 0.0,
+                hit_pct: 0.0,
+                churn_tokens_per_turn: None,
+                turn_count: 0,
+            };
+        }
+    };
+    let reader = BufReader::new(file);
+    let mut turns: Vec<TurnTokens> = Vec::new();
+
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => continue,
+        };
+        if line.trim().is_empty() {
+            continue;
+        }
+        let record: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if record.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+            continue;
+        }
+        let message = match record.get("message") {
+            Some(m) => m,
+            None => continue,
+        };
+        let usage = match message.get("usage") {
+            Some(u) => u,
+            None => continue,
+        };
+        let output_tokens = usage
+            .get("output_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if output_tokens == 0 {
+            continue;
+        }
+        let input = usage
+            .get("input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let creation = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let read = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        turns.push(TurnTokens {
+            input,
+            creation,
+            read,
+        });
+    }
+
+    let turn_count = turns.len();
+    let total_input: u64 = turns
+        .iter()
+        .fold(0u64, |acc, t| acc.saturating_add(t.input));
+    let total_creation: u64 = turns
+        .iter()
+        .fold(0u64, |acc, t| acc.saturating_add(t.creation));
+    let total_read: u64 = turns.iter().fold(0u64, |acc, t| acc.saturating_add(t.read));
+    let total = total_input
+        .saturating_add(total_creation)
+        .saturating_add(total_read);
+
+    let cold_pct = if total > 0 {
+        total_input as f64 / total as f64
+    } else {
+        0.0
+    };
+    let hit_pct = if total > 0 {
+        total_read as f64 / total as f64
+    } else {
+        0.0
+    };
+
+    let churn_tokens_per_turn = if turn_count >= window {
+        let window_creation: u64 = turns[turn_count - window..]
+            .iter()
+            .fold(0u64, |acc, t| acc.saturating_add(t.creation));
+        Some(window_creation.saturating_div(window as u64))
+    } else {
+        None
+    };
+
+    CacheStatsOutput {
+        cold_pct,
+        hit_pct,
+        churn_tokens_per_turn,
+        turn_count,
+    }
+}
+
 fn format_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.0)
