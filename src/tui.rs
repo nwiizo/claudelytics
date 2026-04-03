@@ -2229,37 +2229,41 @@ impl TuiApp {
             .iter()
             .enumerate()
             .map(|(i, session)| {
-                // Combine project_path + session_id to get a full path string
+                // Extract project name and session UUID from the data
+                // project_path may contain "dir/uuid" or just "dir"
+                // session_id may contain "subagents" or be the project dir itself
                 let full_path = if session.project_path.is_empty() {
                     session.session_id.clone()
                 } else {
                     format!("{}/{}", session.project_path, session.session_id)
                 };
 
-                // Split full_path by '/' and extract the directory part (without UUID)
+                // Try to find a UUID-like segment anywhere in the path
                 let parts: Vec<&str> = full_path.split('/').collect();
-                let (dir_part, uuid_part) = if parts.len() >= 2 {
-                    // Last part might be a UUID session id, rest is directory path
-                    let last = *parts.last().unwrap_or(&"");
-                    // Check if last part looks like a UUID (8-4-4-4-12) or subcommand
-                    let is_uuid =
-                        last.len() >= 8 && last.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
-                    if is_uuid {
-                        let dir = parts[..parts.len() - 1].join("/");
-                        (dir, last.to_string())
+                let mut uuid_part = String::new();
+                let mut dir_parts = Vec::new();
+                for part in &parts {
+                    // UUID pattern: 8-4-4-4-12 hex chars with hyphens, length 36
+                    if part.len() == 36
+                        && part.chars().filter(|c| *c == '-').count() == 4
+                        && part.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+                    {
+                        if uuid_part.is_empty() {
+                            uuid_part = part.to_string();
+                        }
                     } else {
-                        // The "last" is actually the directory name (e.g., project_path is empty)
-                        (full_path.clone(), String::new())
+                        dir_parts.push(*part);
                     }
+                }
+                let dir_part = if dir_parts.is_empty() {
+                    full_path.clone()
                 } else {
-                    (full_path.clone(), String::new())
+                    dir_parts.join("/")
                 };
 
                 let project_name = Self::extract_project_name(&dir_part);
                 let session_short = if uuid_part.len() >= 8 {
                     uuid_part[..8].to_string()
-                } else if !uuid_part.is_empty() {
-                    uuid_part.clone()
                 } else {
                     "-".to_string()
                 };

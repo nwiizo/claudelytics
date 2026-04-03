@@ -283,13 +283,19 @@ impl UsageParser {
                     continue;
                 }
 
-                // Remove the filename to get the session directory
-                components.pop();
+                // Last component is the filename (e.g., "uuid.jsonl")
+                // Strip .jsonl extension to get the session UUID
+                if let Some(last) = components.last_mut()
+                    && let Some(stem) = last.strip_suffix(".jsonl")
+                {
+                    *last = stem;
+                }
 
                 if components.is_empty() {
                     continue;
                 }
 
+                // Return "project-dir/session-uuid" or "project-dir/subdir/session-uuid"
                 return Ok(components.join("/"));
             }
         }
@@ -623,7 +629,7 @@ mod tests {
         let session_info = parser
             .extract_session_info(&path)
             .expect("Failed to extract session info");
-        assert_eq!(session_info, "test-project");
+        assert_eq!(session_info, "test-project/test-session");
     }
 
     #[test]
