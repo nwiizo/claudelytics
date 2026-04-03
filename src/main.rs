@@ -1195,12 +1195,6 @@ fn run() -> Result<()> {
         return result;
     }
 
-    // Handle Analytics TUI flag (temporarily disabled)
-    // if cli.analytics_tui {
-    //     let mut analytics_tui_app = AnalyticsTuiApp::new(daily_report, session_report);
-    //     return analytics_tui_app.run();
-    // }
-
     // Generate and display report based on command
     let command = cli.command.unwrap_or(Commands::Daily {
         classic: false,
@@ -1381,10 +1375,6 @@ fn run() -> Result<()> {
             save_tui_state(&tui_app, TuiMode::Basic).ok();
             result?;
         }
-        // Commands::AnalyticsTui => {
-        //     let mut analytics_tui_app = AnalyticsTuiApp::new(daily_report, session_report);
-        //     analytics_tui_app.run()?;
-        // } // Temporarily disabled - work in progress
         Commands::BillingBlocks { classic, summary } => {
             handle_billing_blocks_command(
                 &billing_manager,

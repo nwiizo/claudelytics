@@ -141,6 +141,10 @@ impl SmoothProgressBar {
         self.target = value.min(self.max);
     }
 
+    pub fn set_max(&mut self, max: f64) {
+        self.max = max;
+    }
+
     pub fn set_color_scheme(&mut self, scheme: ProgressColorScheme) {
         self.color_scheme = scheme;
     }

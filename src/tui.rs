@@ -2406,45 +2406,6 @@ impl TuiApp {
         }
     }
 
-    #[allow(dead_code)]
-    fn highlight_search_matches(&self, text: &str) -> Line<'static> {
-        if self.conversation_search_query.is_empty() {
-            return Line::from(text.to_string());
-        }
-
-        let query = self.conversation_search_query.to_lowercase();
-        let text_lower = text.to_lowercase();
-        let mut spans = Vec::new();
-        let mut last_end = 0;
-
-        // Find all occurrences of the search query
-        for (start, _) in text_lower.match_indices(&query) {
-            // Add text before the match
-            if start > last_end {
-                spans.push(Span::raw(text[last_end..start].to_string()));
-            }
-
-            // Add the highlighted match
-            let end = start + query.len();
-            spans.push(Span::styled(
-                text[start..end].to_string(),
-                Style::default()
-                    .bg(Color::Yellow)
-                    .fg(Color::Black)
-                    .add_modifier(Modifier::BOLD),
-            ));
-
-            last_end = end;
-        }
-
-        // Add remaining text after the last match
-        if last_end < text.len() {
-            spans.push(Span::raw(text[last_end..].to_string()));
-        }
-
-        Line::from(spans)
-    }
-
     fn ui(&mut self, f: &mut Frame) {
         match self.current_mode {
             AppMode::CommandPalette => {
@@ -2653,7 +2614,7 @@ impl TuiApp {
             Line::from(vec![
                 Span::styled("💰 Total Cost: ", Style::default().fg(Color::White)),
                 Span::styled(
-                    format!("${:.4}", self.daily_report.totals.total_cost),
+                    format!("${:.2}", self.daily_report.totals.total_cost),
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
@@ -2775,7 +2736,7 @@ impl TuiApp {
                 Span::styled("📈 Avg Cost/Day: ", Style::default().fg(Color::White)),
                 Span::styled(
                     format!(
-                        "${:.4}",
+                        "${:.2}",
                         if self.daily_report.daily.is_empty() {
                             0.0
                         } else {
@@ -2814,45 +2775,66 @@ impl TuiApp {
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
             .split(chunks[2]);
 
+        // Compute dynamic maximums from actual data
+        let max_daily_cost = self
+            .daily_report
+            .daily
+            .iter()
+            .map(|d| d.total_cost)
+            .fold(0.0_f64, f64::max)
+            .max(1.0);
+        let max_daily_tokens = self
+            .daily_report
+            .daily
+            .iter()
+            .map(|d| d.total_tokens)
+            .max()
+            .unwrap_or(1) as f64;
+        // Round up to a nice ceiling (next power-of-10-ish)
+        let cost_ceiling = (max_daily_cost * 1.2).max(10.0);
+        let token_ceiling = (max_daily_tokens * 1.2).max(100_000.0);
+
         // Cost progress bar
         if self.visual_effects.progress_bars.is_empty() {
-            let mut cost_bar = SmoothProgressBar::new("Daily Cost".to_string(), 10.0);
+            let mut cost_bar = SmoothProgressBar::new("Daily Cost".to_string(), cost_ceiling);
             cost_bar.set_value(self.daily_report.totals.total_cost);
             cost_bar.set_color_scheme(ProgressColorScheme::CostBased);
             self.visual_effects.progress_bars.push(cost_bar);
 
-            let mut token_bar = SmoothProgressBar::new("Token Usage".to_string(), 1000000.0);
+            let mut token_bar = SmoothProgressBar::new("Token Usage".to_string(), token_ceiling);
             token_bar.set_value(self.daily_report.totals.total_tokens as f64);
             token_bar.set_color_scheme(ProgressColorScheme::TokenBased);
             self.visual_effects.progress_bars.push(token_bar);
         }
 
-        // Update progress bar values
+        // Update progress bar values and max
         if let Some(cost_bar) = self.visual_effects.progress_bars.get_mut(0) {
+            cost_bar.set_max(cost_ceiling);
             cost_bar.set_value(self.daily_report.totals.total_cost);
             cost_bar.render(f, progress_chunks[0]);
         }
 
         if let Some(token_bar) = self.visual_effects.progress_bars.get_mut(1) {
+            token_bar.set_max(token_ceiling);
             token_bar.set_value(self.daily_report.totals.total_tokens as f64);
             token_bar.render(f, progress_chunks[1]);
         }
 
-        // Enhanced cost breakdown gauge with mini chart
+        // Cost gauge based on total cost relative to dynamic max
         if self.daily_report.totals.total_cost > 0.0 {
-            let cost_ratio = (self.daily_report.totals.total_cost / 10.0).min(1.0);
+            let cost_ratio = (self.daily_report.totals.total_cost / cost_ceiling).min(1.0);
             let gauge = Gauge::default()
                 .block(
                     Block::default()
                         .borders(Borders::ALL)
-                        .title("💳 Cost Gauge & Mini Trend")
+                        .title("💳 Total Cost")
                         .border_style(Style::default().fg(Color::Yellow)),
                 )
                 .gauge_style(Style::default().fg(Color::Green))
                 .ratio(cost_ratio)
                 .label(format!(
-                    "${:.4} / $10.00",
-                    self.daily_report.totals.total_cost
+                    "${:.2} / ${:.0}",
+                    self.daily_report.totals.total_cost, cost_ceiling
                 ));
             f.render_widget(gauge, chunks[3]);
         }
@@ -2946,7 +2928,7 @@ impl TuiApp {
 
             Row::new(vec![
                 Cell::from(day.date.clone()).style(style),
-                Cell::from(format!("${:.4}", day.total_cost))
+                Cell::from(format!("${:.2}", day.total_cost))
                     .style(Style::default().fg(cost_color)),
                 Cell::from(self.format_number(day.total_tokens))
                     .style(Style::default().fg(Color::Magenta)),
@@ -3152,7 +3134,7 @@ impl TuiApp {
 
                 Row::new(vec![
                     Cell::from(format!("{} {}", comparison_indicator, truncated_path)).style(style),
-                    Cell::from(format!("${:.4}", session.total_cost))
+                    Cell::from(format!("${:.2}", session.total_cost))
                         .style(Style::default().fg(cost_color)),
                     Cell::from(self.format_number(session.total_tokens))
                         .style(Style::default().fg(Color::Magenta)),
@@ -3575,7 +3557,7 @@ impl TuiApp {
                 Span::styled(format!("{} ", day.date), Style::default().fg(Color::White)),
                 Span::styled(bar, Style::default().fg(Color::Green)),
                 Span::styled(
-                    format!(" ${:.3}", day.total_cost),
+                    format!(" ${:.2}", day.total_cost),
                     Style::default().fg(Color::Yellow),
                 ),
             ]);
@@ -3686,7 +3668,7 @@ impl TuiApp {
         lines.push(Line::from(vec![
             Span::styled("💰 Avg Session Cost: ", Style::default().fg(Color::White)),
             Span::styled(
-                format!("${:.4}", avg_session_cost),
+                format!("${:.2}", avg_session_cost),
                 Style::default()
                     .fg(Color::Green)
                     .add_modifier(Modifier::BOLD),
@@ -3698,7 +3680,7 @@ impl TuiApp {
         lines.push(Line::from(vec![
             Span::styled("🔥 Max Daily Cost: ", Style::default().fg(Color::White)),
             Span::styled(
-                format!("${:.4}", max_daily_cost),
+                format!("${:.2}", max_daily_cost),
                 Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -3708,7 +3690,7 @@ impl TuiApp {
         lines.push(Line::from(vec![
             Span::styled("🚀 Max Session Cost: ", Style::default().fg(Color::White)),
             Span::styled(
-                format!("${:.4}", max_session_cost),
+                format!("${:.2}", max_session_cost),
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD),
@@ -4227,7 +4209,7 @@ impl TuiApp {
                 Line::from(vec![
                     Span::styled("💰 Current Block Cost: ", Style::default().fg(Color::White)),
                     Span::styled(
-                        format!("${:.4}", current_block_cost),
+                        format!("${:.2}", current_block_cost),
                         Style::default()
                             .fg(if current_block_cost > 5.0 {
                                 Color::Red
@@ -4257,7 +4239,7 @@ impl TuiApp {
                     Span::styled(
                         if let Some(ref peak) = report.peak_block {
                             format!(
-                                "${:.4} ({} {})",
+                                "${:.2} ({} {})",
                                 peak.usage.total_cost, peak.date, peak.time_range
                             )
                         } else {
@@ -4270,13 +4252,13 @@ impl TuiApp {
                 Line::from(vec![
                     Span::styled("💵 Average per Block: ", Style::default().fg(Color::White)),
                     Span::styled(
-                        format!("${:.4}", report.average_per_block.total_cost),
+                        format!("${:.2}", report.average_per_block.total_cost),
                         Style::default().fg(Color::Yellow),
                     ),
                     Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
                     Span::styled("🎯 Total Cost: ", Style::default().fg(Color::White)),
                     Span::styled(
-                        format!("${:.4}", report.total_usage.total_cost),
+                        format!("${:.2}", report.total_usage.total_cost),
                         Style::default()
                             .fg(Color::Green)
                             .add_modifier(Modifier::BOLD),
@@ -4407,13 +4389,13 @@ impl TuiApp {
 
             Row::new(vec![
                 Cell::from(format!("{} - {}", &block.date, &block.time_range)).style(style),
-                Cell::from(format!("${:.4}", block.usage.total_cost))
+                Cell::from(format!("${:.2}", block.usage.total_cost))
                     .style(Style::default().fg(cost_color)),
                 Cell::from(self.format_number(block.usage.total_tokens()))
                     .style(Style::default().fg(Color::Magenta)),
                 Cell::from(format!("{}", block.session_count))
                     .style(Style::default().fg(Color::Blue)),
-                Cell::from(format!("${:.4}", avg_per_session))
+                Cell::from(format!("${:.2}", avg_per_session))
                     .style(Style::default().fg(Color::Yellow)),
                 Cell::from(format!("{:.1}%", percentage)).style(Style::default().fg(Color::Cyan)),
             ])
@@ -5045,7 +5027,7 @@ impl TuiApp {
                     && let Some(session) = self.session_report.sessions.get(selected)
                 {
                     let info = format!(
-                        "Project: {}, Session: {}, Cost: ${:.4}, Tokens: {}",
+                        "Project: {}, Session: {}, Cost: ${:.2}, Tokens: {}",
                         session.project_path,
                         session.session_id,
                         session.total_cost,
