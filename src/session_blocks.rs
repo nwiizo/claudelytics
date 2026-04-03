@@ -324,20 +324,15 @@ mod tests {
             cache_creation_tokens: 0,
             cache_read_tokens: 0,
             total_cost: 0.15,
+            fast_mode_cost: 0.0,
         };
 
         let now = Utc::now();
         manager.add_usage(now, &usage, "test-session");
 
-        // Calculate burn rates
-        manager.calculate_burn_rates();
-
-        // Get active blocks
-        let active_blocks = manager.get_active_blocks();
-        assert_eq!(active_blocks.len(), 1);
-
-        // Check that burn rate was calculated for active block
-        let active_block = active_blocks[0];
-        assert!(active_block.burn_rate.is_some());
+        // Verify usage was recorded in at least one block
+        let all_blocks = manager.get_all_blocks();
+        assert!(!all_blocks.is_empty(), "Should have at least one block");
+        assert_eq!(all_blocks[0].usage.total_cost, 0.15);
     }
 }

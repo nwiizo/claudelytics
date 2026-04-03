@@ -156,13 +156,13 @@ pub struct RecordValidator {
 #[allow(dead_code)]
 impl RecordValidator {
     pub fn new(since: Option<NaiveDate>, until: Option<NaiveDate>) -> Result<Self> {
-        if let (Some(since), Some(until)) = (since, until) {
-            if since > until {
-                return Err(ClaudelyticsError::validation_error(
-                    "date_range",
-                    "Since date must be before or equal to until date",
-                ));
-            }
+        if let (Some(since), Some(until)) = (since, until)
+            && since > until
+        {
+            return Err(ClaudelyticsError::validation_error(
+                "date_range",
+                "Since date must be before or equal to until date",
+            ));
         }
 
         Ok(Self { since, until })
@@ -193,16 +193,16 @@ impl RecordValidator {
         // 日付範囲のフィルタリング
         let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
 
-        if let Some(since) = self.since {
-            if date < since {
-                return false;
-            }
+        if let Some(since) = self.since
+            && date < since
+        {
+            return false;
         }
 
-        if let Some(until) = self.until {
-            if date > until {
-                return false;
-            }
+        if let Some(until) = self.until
+            && date > until
+        {
+            return false;
         }
 
         true

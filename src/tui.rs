@@ -322,10 +322,10 @@ impl TuiApp {
     }
 
     pub fn get_selected_session_path(&self) -> Option<String> {
-        if let Some(selected) = self.session_table_state.selected() {
-            if let Some(session) = self.session_report.sessions.get(selected) {
-                return Some(format!("{}/{}", session.project_path, session.session_id));
-            }
+        if let Some(selected) = self.session_table_state.selected()
+            && let Some(session) = self.session_report.sessions.get(selected)
+        {
+            return Some(format!("{}/{}", session.project_path, session.session_id));
         }
         None
     }
@@ -478,20 +478,20 @@ impl TuiApp {
     }
 
     fn open_selected_session(&mut self) {
-        if let Some(selected) = self.resume_table_state.selected() {
-            if let Some(session) = self.resume_sessions.get(selected) {
-                match self.open_claude_session(session.number) {
-                    Ok(_) => {
-                        self.status_message = Some(format!(
-                            "🚀 Opening session {}: {}",
-                            session.number, session.summary
-                        ));
-                        // Exit TUI since we're opening Claude
-                        self.should_quit = true;
-                    }
-                    Err(e) => {
-                        self.status_message = Some(format!("❌ Failed to open session: {}", e));
-                    }
+        if let Some(selected) = self.resume_table_state.selected()
+            && let Some(session) = self.resume_sessions.get(selected)
+        {
+            match self.open_claude_session(session.number) {
+                Ok(_) => {
+                    self.status_message = Some(format!(
+                        "🚀 Opening session {}: {}",
+                        session.number, session.summary
+                    ));
+                    // Exit TUI since we're opening Claude
+                    self.should_quit = true;
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("❌ Failed to open session: {}", e));
                 }
             }
         }
@@ -612,70 +612,67 @@ impl TuiApp {
             terminal.draw(|f| self.ui(f))?;
 
             // Check for events with timeout to prevent hanging
-            if poll(std::time::Duration::from_millis(50))? {
-                if let Ok(evt) = event::read() {
-                    match evt {
-                        Event::Key(key) => {
-                            if key.kind == KeyEventKind::Press {
-                                // Add key press visual effect
-                                if let KeyCode::Char(c) = key.code {
-                                    let key_str = if key.modifiers.contains(KeyModifiers::CONTROL) {
-                                        format!("Ctrl+{}", c)
-                                    } else {
-                                        c.to_string()
-                                    };
-                                    let effect_pos = Rect {
-                                        x: terminal.size()?.width / 2 - 2,
-                                        y: terminal.size()?.height - 5,
-                                        width: 5,
-                                        height: 1,
-                                    };
-                                    self.visual_effects.add_key_effect(key_str, effect_pos);
-                                }
-
-                                // Check if we're in resume input mode first
-                                if self.resume_input_mode {
-                                    self.handle_resume_input(key.code)?;
+            if poll(std::time::Duration::from_millis(50))?
+                && let Ok(evt) = event::read()
+            {
+                match evt {
+                    Event::Key(key) => {
+                        if key.kind == KeyEventKind::Press {
+                            // Add key press visual effect
+                            if let KeyCode::Char(c) = key.code {
+                                let key_str = if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    format!("Ctrl+{}", c)
                                 } else {
-                                    match self.current_mode {
-                                        AppMode::CommandPalette => {
-                                            self.handle_command_palette_input(
-                                                key.code,
-                                                key.modifiers,
-                                            )?;
+                                    c.to_string()
+                                };
+                                let effect_pos = Rect {
+                                    x: terminal.size()?.width / 2 - 2,
+                                    y: terminal.size()?.height - 5,
+                                    width: 5,
+                                    height: 1,
+                                };
+                                self.visual_effects.add_key_effect(key_str, effect_pos);
+                            }
+
+                            // Check if we're in resume input mode first
+                            if self.resume_input_mode {
+                                self.handle_resume_input(key.code)?;
+                            } else {
+                                match self.current_mode {
+                                    AppMode::CommandPalette => {
+                                        self.handle_command_palette_input(key.code, key.modifiers)?;
+                                    }
+                                    AppMode::Search => {
+                                        self.handle_search_input(key.code)?;
+                                    }
+                                    AppMode::Visual => {
+                                        self.handle_visual_mode_input(key.code)?;
+                                    }
+                                    AppMode::ExportDialog => {
+                                        self.handle_export_dialog_input(key.code)?;
+                                    }
+                                    AppMode::ConversationView => {
+                                        if self.conversation_search_mode {
+                                            self.handle_conversation_search_input(key.code)?;
+                                        } else {
+                                            self.handle_conversation_view_input(key.code)?;
                                         }
-                                        AppMode::Search => {
+                                    }
+                                    AppMode::Normal => {
+                                        if self.search_mode {
                                             self.handle_search_input(key.code)?;
-                                        }
-                                        AppMode::Visual => {
-                                            self.handle_visual_mode_input(key.code)?;
-                                        }
-                                        AppMode::ExportDialog => {
-                                            self.handle_export_dialog_input(key.code)?;
-                                        }
-                                        AppMode::ConversationView => {
-                                            if self.conversation_search_mode {
-                                                self.handle_conversation_search_input(key.code)?;
-                                            } else {
-                                                self.handle_conversation_view_input(key.code)?;
-                                            }
-                                        }
-                                        AppMode::Normal => {
-                                            if self.search_mode {
-                                                self.handle_search_input(key.code)?;
-                                            } else {
-                                                self.handle_normal_input(key.code, key.modifiers)?;
-                                            }
+                                        } else {
+                                            self.handle_normal_input(key.code, key.modifiers)?;
                                         }
                                     }
                                 }
                             }
                         }
-                        Event::Mouse(mouse) => {
-                            self.handle_mouse_event(mouse);
-                        }
-                        _ => {}
                     }
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse_event(mouse);
+                    }
+                    _ => {}
                 }
             }
 
@@ -872,11 +869,11 @@ impl TuiApp {
             }
             KeyCode::Char('b') => {
                 self.bookmark_selected_session();
-                if let Some(msg) = &self.status_message {
-                    if msg.contains("Bookmarked") {
-                        self.visual_effects
-                            .add_toast(ToastNotification::success(msg.clone()));
-                    }
+                if let Some(msg) = &self.status_message
+                    && msg.contains("Bookmarked")
+                {
+                    self.visual_effects
+                        .add_toast(ToastNotification::success(msg.clone()));
                 }
             }
             KeyCode::Char('x') => {
@@ -1631,11 +1628,11 @@ impl TuiApp {
                 self.status_message = None;
             }
             KeyCode::Enter => {
-                if let Some(selected) = self.command_table_state.selected() {
-                    if let Some(command) = self.filtered_commands.get(selected) {
-                        let action = command.action.clone();
-                        self.execute_command(&action)?;
-                    }
+                if let Some(selected) = self.command_table_state.selected()
+                    && let Some(command) = self.filtered_commands.get(selected)
+                {
+                    let action = command.action.clone();
+                    self.execute_command(&action)?;
                 }
                 self.current_mode = AppMode::Normal;
                 self.command_palette_query.clear();
@@ -1694,9 +1691,8 @@ impl TuiApp {
                 self.status_message = Some(format!("Switched to tab {}", index + 1));
             }
             CommandAction::ExportData(_) => {
-                // TODO: Implement export functionality
-                // self.export_current_view()?;
-                self.status_message = Some("Export functionality not yet implemented".to_string());
+                self.status_message =
+                    Some("Use 'claudelytics export' command for CSV export".to_string());
             }
             CommandAction::BookmarkSession(_) => {
                 self.bookmark_selected_session();
@@ -1901,38 +1897,38 @@ impl TuiApp {
     }
 
     fn bookmark_selected_session(&mut self) {
-        if let Some(selected) = self.session_table_state.selected() {
-            if let Some(session) = self.session_report.sessions.get(selected) {
-                let session_id = format!("{}/{}", session.project_path, session.session_id);
-                if !self.bookmarked_sessions.contains(&session_id) {
-                    self.bookmarked_sessions.push(session_id.clone());
-                    self.status_message = Some(format!("🔖 Bookmarked session: {}", session_id));
-                } else {
-                    self.bookmarked_sessions.retain(|s| s != &session_id);
-                    self.status_message = Some(format!("📌 Removed bookmark: {}", session_id));
-                }
+        if let Some(selected) = self.session_table_state.selected()
+            && let Some(session) = self.session_report.sessions.get(selected)
+        {
+            let session_id = format!("{}/{}", session.project_path, session.session_id);
+            if !self.bookmarked_sessions.contains(&session_id) {
+                self.bookmarked_sessions.push(session_id.clone());
+                self.status_message = Some(format!("🔖 Bookmarked session: {}", session_id));
+            } else {
+                self.bookmarked_sessions.retain(|s| s != &session_id);
+                self.status_message = Some(format!("📌 Removed bookmark: {}", session_id));
             }
         }
     }
 
     fn toggle_comparison_selection(&mut self) {
-        if let Some(selected) = self.session_table_state.selected() {
-            if let Some(session) = self.session_report.sessions.get(selected) {
-                let session_id = format!("{}/{}", session.project_path, session.session_id);
-                if self.comparison_sessions.contains(&session_id) {
-                    self.comparison_sessions.retain(|s| s != &session_id);
-                    self.status_message = Some(format!("Removed from comparison: {}", session_id));
-                } else if self.comparison_sessions.len() < 5 {
-                    // Limit to 5 sessions
-                    self.comparison_sessions.push(session_id.clone());
-                    self.status_message = Some(format!(
-                        "Added to comparison: {} ({} total)",
-                        session_id,
-                        self.comparison_sessions.len()
-                    ));
-                } else {
-                    self.status_message = Some("Maximum 5 sessions can be compared".to_string());
-                }
+        if let Some(selected) = self.session_table_state.selected()
+            && let Some(session) = self.session_report.sessions.get(selected)
+        {
+            let session_id = format!("{}/{}", session.project_path, session.session_id);
+            if self.comparison_sessions.contains(&session_id) {
+                self.comparison_sessions.retain(|s| s != &session_id);
+                self.status_message = Some(format!("Removed from comparison: {}", session_id));
+            } else if self.comparison_sessions.len() < 5 {
+                // Limit to 5 sessions
+                self.comparison_sessions.push(session_id.clone());
+                self.status_message = Some(format!(
+                    "Added to comparison: {} ({} total)",
+                    session_id,
+                    self.comparison_sessions.len()
+                ));
+            } else {
+                self.status_message = Some("Maximum 5 sessions can be compared".to_string());
             }
         }
     }
@@ -1960,38 +1956,36 @@ impl TuiApp {
     }
 
     fn view_selected_conversation(&mut self) {
-        if let Some(selected) = self.conversation_table_state.selected() {
-            if let Some(session) = self.conversation_sessions.get(selected).cloned() {
-                self.load_conversation_messages(session);
-            }
+        if let Some(selected) = self.conversation_table_state.selected()
+            && let Some(session) = self.conversation_sessions.get(selected).cloned()
+        {
+            self.load_conversation_messages(session);
         }
     }
 
     fn view_session_conversation(&mut self) {
-        if let Some(selected) = self.session_table_state.selected() {
-            if let Some(session_report) = self.session_report.sessions.get(selected) {
-                // Find the corresponding ClaudeSession
-                let parser = ClaudeSessionParser::new(None);
-                match parser.parse_all_sessions() {
-                    Ok(sessions) => {
-                        for session in sessions {
-                            if session.session_id == session_report.session_id
-                                && session.project_path == session_report.project_path
-                            {
-                                self.load_conversation_messages(session);
-                                self.current_tab = Tab::Conversations;
-                                self.current_mode = AppMode::ConversationView;
-                                return;
-                            }
+        if let Some(selected) = self.session_table_state.selected()
+            && let Some(session_report) = self.session_report.sessions.get(selected)
+        {
+            // Find the corresponding ClaudeSession
+            let parser = ClaudeSessionParser::new(None);
+            match parser.parse_all_sessions() {
+                Ok(sessions) => {
+                    for session in sessions {
+                        if session.session_id == session_report.session_id
+                            && session.project_path == session_report.project_path
+                        {
+                            self.load_conversation_messages(session);
+                            self.current_tab = Tab::Conversations;
+                            self.current_mode = AppMode::ConversationView;
+                            return;
                         }
-                        self.status_message = Some(
-                            "❌ Could not find conversation data for this session".to_string(),
-                        );
                     }
-                    Err(e) => {
-                        self.status_message =
-                            Some(format!("❌ Failed to load conversation: {}", e));
-                    }
+                    self.status_message =
+                        Some("❌ Could not find conversation data for this session".to_string());
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("❌ Failed to load conversation: {}", e));
                 }
             }
         }
@@ -2023,10 +2017,10 @@ impl TuiApp {
                         continue;
                     }
 
-                    if let Ok(line_content) = line {
-                        if let Ok(message) = serde_json::from_str::<ClaudeMessage>(&line_content) {
-                            messages.push(message);
-                        }
+                    if let Ok(line_content) = line
+                        && let Ok(message) = serde_json::from_str::<ClaudeMessage>(&line_content)
+                    {
+                        messages.push(message);
                     }
                 }
 
@@ -2102,37 +2096,35 @@ impl TuiApp {
                 ));
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if let Some(ref mut conv) = self.selected_conversation {
-                    if let Some(selected) = conv.message_table_state.selected() {
-                        if selected < conv.filtered_messages.len() - 1 {
-                            conv.message_table_state.select(Some(selected + 1));
-                        }
-                    }
+                if let Some(ref mut conv) = self.selected_conversation
+                    && let Some(selected) = conv.message_table_state.selected()
+                    && selected < conv.filtered_messages.len() - 1
+                {
+                    conv.message_table_state.select(Some(selected + 1));
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if let Some(ref mut conv) = self.selected_conversation {
-                    if let Some(selected) = conv.message_table_state.selected() {
-                        if selected > 0 {
-                            conv.message_table_state.select(Some(selected - 1));
-                        }
-                    }
+                if let Some(ref mut conv) = self.selected_conversation
+                    && let Some(selected) = conv.message_table_state.selected()
+                    && selected > 0
+                {
+                    conv.message_table_state.select(Some(selected - 1));
                 }
             }
             KeyCode::PageDown => {
-                if let Some(ref mut conv) = self.selected_conversation {
-                    if let Some(selected) = conv.message_table_state.selected() {
-                        let new_pos = (selected + 10).min(conv.filtered_messages.len() - 1);
-                        conv.message_table_state.select(Some(new_pos));
-                    }
+                if let Some(ref mut conv) = self.selected_conversation
+                    && let Some(selected) = conv.message_table_state.selected()
+                {
+                    let new_pos = (selected + 10).min(conv.filtered_messages.len() - 1);
+                    conv.message_table_state.select(Some(new_pos));
                 }
             }
             KeyCode::PageUp => {
-                if let Some(ref mut conv) = self.selected_conversation {
-                    if let Some(selected) = conv.message_table_state.selected() {
-                        let new_pos = selected.saturating_sub(10);
-                        conv.message_table_state.select(Some(new_pos));
-                    }
+                if let Some(ref mut conv) = self.selected_conversation
+                    && let Some(selected) = conv.message_table_state.selected()
+                {
+                    let new_pos = selected.saturating_sub(10);
+                    conv.message_table_state.select(Some(new_pos));
                 }
             }
             KeyCode::Char('p') | KeyCode::Char('h') => {
@@ -2265,38 +2257,35 @@ impl TuiApp {
     fn navigate_to_parent_message(&mut self) {
         if let Some(ref mut conv) = self.selected_conversation {
             if let Some(ref conversation) = conv.conversation {
-                if let Some(selected_idx) = conv.message_table_state.selected() {
-                    if let Some(selected_msg) = conv.filtered_messages.get(selected_idx) {
-                        // Find the corresponding message in the full conversation
-                        let current_msg = conversation.messages.iter().find(|m| {
-                            m.timestamp == selected_msg.timestamp
-                                && m.role == selected_msg.message.role
-                        });
+                if let Some(selected_idx) = conv.message_table_state.selected()
+                    && let Some(selected_msg) = conv.filtered_messages.get(selected_idx)
+                {
+                    // Find the corresponding message in the full conversation
+                    let current_msg = conversation.messages.iter().find(|m| {
+                        m.timestamp == selected_msg.timestamp && m.role == selected_msg.message.role
+                    });
 
-                        if let Some(msg) = current_msg {
-                            if let Some(ref parent_uuid) = msg.parent_uuid {
-                                // Find parent message index in filtered messages
-                                for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate()
-                                {
-                                    let parent_msg = conversation.messages.iter().find(|m| {
-                                        m.timestamp == filtered_msg.timestamp
-                                            && m.role == filtered_msg.message.role
-                                            && m.uuid == *parent_uuid
-                                    });
+                    if let Some(msg) = current_msg {
+                        if let Some(ref parent_uuid) = msg.parent_uuid {
+                            // Find parent message index in filtered messages
+                            for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
+                                let parent_msg = conversation.messages.iter().find(|m| {
+                                    m.timestamp == filtered_msg.timestamp
+                                        && m.role == filtered_msg.message.role
+                                        && m.uuid == *parent_uuid
+                                });
 
-                                    if parent_msg.is_some() {
-                                        conv.message_table_state.select(Some(idx));
-                                        self.status_message =
-                                            Some("Navigated to parent message".to_string());
-                                        return;
-                                    }
+                                if parent_msg.is_some() {
+                                    conv.message_table_state.select(Some(idx));
+                                    self.status_message =
+                                        Some("Navigated to parent message".to_string());
+                                    return;
                                 }
-                                self.status_message =
-                                    Some("Parent message not found in filtered view".to_string());
-                            } else {
-                                self.status_message =
-                                    Some("This message has no parent".to_string());
                             }
+                            self.status_message =
+                                Some("Parent message not found in filtered view".to_string());
+                        } else {
+                            self.status_message = Some("This message has no parent".to_string());
                         }
                     }
                 }
@@ -2310,35 +2299,34 @@ impl TuiApp {
     fn navigate_to_first_child(&mut self) {
         if let Some(ref mut conv) = self.selected_conversation {
             if let Some(ref conversation) = conv.conversation {
-                if let Some(selected_idx) = conv.message_table_state.selected() {
-                    if let Some(selected_msg) = conv.filtered_messages.get(selected_idx) {
-                        // Find the corresponding message in the full conversation
-                        let current_msg = conversation.messages.iter().find(|m| {
-                            m.timestamp == selected_msg.timestamp
-                                && m.role == selected_msg.message.role
-                        });
+                if let Some(selected_idx) = conv.message_table_state.selected()
+                    && let Some(selected_msg) = conv.filtered_messages.get(selected_idx)
+                {
+                    // Find the corresponding message in the full conversation
+                    let current_msg = conversation.messages.iter().find(|m| {
+                        m.timestamp == selected_msg.timestamp && m.role == selected_msg.message.role
+                    });
 
-                        if let Some(msg) = current_msg {
-                            let current_uuid = &msg.uuid;
+                    if let Some(msg) = current_msg {
+                        let current_uuid = &msg.uuid;
 
-                            // Find first child message in filtered messages
-                            for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
-                                let child_msg = conversation.messages.iter().find(|m| {
-                                    m.timestamp == filtered_msg.timestamp
-                                        && m.role == filtered_msg.message.role
-                                        && m.parent_uuid.as_ref() == Some(current_uuid)
-                                });
+                        // Find first child message in filtered messages
+                        for (idx, filtered_msg) in conv.filtered_messages.iter().enumerate() {
+                            let child_msg = conversation.messages.iter().find(|m| {
+                                m.timestamp == filtered_msg.timestamp
+                                    && m.role == filtered_msg.message.role
+                                    && m.parent_uuid.as_ref() == Some(current_uuid)
+                            });
 
-                                if child_msg.is_some() {
-                                    conv.message_table_state.select(Some(idx));
-                                    self.status_message =
-                                        Some("Navigated to first child message".to_string());
-                                    return;
-                                }
+                            if child_msg.is_some() {
+                                conv.message_table_state.select(Some(idx));
+                                self.status_message =
+                                    Some("Navigated to first child message".to_string());
+                                return;
                             }
-                            self.status_message =
-                                Some("No child messages found in filtered view".to_string());
                         }
+                        self.status_message =
+                            Some("No child messages found in filtered view".to_string());
                     }
                 }
             } else {
@@ -2628,19 +2616,19 @@ impl TuiApp {
         }
 
         // Status message
-        if let Some(ref message) = self.status_message {
-            if main_chunks.len() > 2 {
-                let status_paragraph = Paragraph::new(message.clone())
-                    .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .title("Status")
-                            .border_style(Style::default().fg(Color::Green)),
-                    )
-                    .style(Style::default().fg(Color::Green))
-                    .wrap(Wrap { trim: true });
-                f.render_widget(status_paragraph, main_chunks[2]);
-            }
+        if let Some(ref message) = self.status_message
+            && main_chunks.len() > 2
+        {
+            let status_paragraph = Paragraph::new(message.clone())
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Status")
+                        .border_style(Style::default().fg(Color::Green)),
+                )
+                .style(Style::default().fg(Color::Green))
+                .wrap(Wrap { trim: true });
+            f.render_widget(status_paragraph, main_chunks[2]);
         }
 
         // Render enhanced status bar at the bottom
@@ -3338,48 +3326,48 @@ impl TuiApp {
                 .split(chunks[1]);
 
             // Message content area
-            if let Some(selected_idx) = conv.message_table_state.selected() {
-                if let Some(message) = conv.filtered_messages.get(selected_idx) {
-                    let content_lines;
+            if let Some(selected_idx) = conv.message_table_state.selected()
+                && let Some(message) = conv.filtered_messages.get(selected_idx)
+            {
+                let content_lines;
 
-                    // Check if we have advanced conversation data
-                    if let Some(ref full_conversation) = conv.conversation {
-                        // Try to find the corresponding message in the full conversation
-                        let advanced_message = full_conversation.messages.iter().find(|m| {
-                            m.timestamp == message.timestamp && m.role == message.message.role
-                        });
+                // Check if we have advanced conversation data
+                if let Some(ref full_conversation) = conv.conversation {
+                    // Try to find the corresponding message in the full conversation
+                    let advanced_message = full_conversation.messages.iter().find(|m| {
+                        m.timestamp == message.timestamp && m.role == message.message.role
+                    });
 
-                        if let Some(adv_msg) = advanced_message {
-                            // Use conversation_display to format the message with syntax highlighting
-                            let formatted_text = conv
-                                .display
-                                .format_conversation_message_for_tui_with_search(
-                                    adv_msg,
-                                    self.show_thinking_blocks,
-                                    self.show_tool_usage,
-                                    &self.conversation_search_query,
-                                );
-                            content_lines = formatted_text.lines;
-                        } else {
-                            // Fallback to basic formatting
-                            content_lines = self.format_message_basic(message);
-                        }
+                    if let Some(adv_msg) = advanced_message {
+                        // Use conversation_display to format the message with syntax highlighting
+                        let formatted_text = conv
+                            .display
+                            .format_conversation_message_for_tui_with_search(
+                                adv_msg,
+                                self.show_thinking_blocks,
+                                self.show_tool_usage,
+                                &self.conversation_search_query,
+                            );
+                        content_lines = formatted_text.lines;
                     } else {
-                        // Use basic formatting when advanced parser is not available
+                        // Fallback to basic formatting
                         content_lines = self.format_message_basic(message);
                     }
-
-                    let content = Paragraph::new(content_lines)
-                        .block(
-                            Block::default()
-                                .borders(Borders::ALL)
-                                .title("Message Content")
-                                .border_style(Style::default().fg(Color::Gray)),
-                        )
-                        .wrap(Wrap { trim: false })
-                        .scroll((conv.scroll_position as u16, 0));
-                    f.render_widget(content, message_chunks[0]);
+                } else {
+                    // Use basic formatting when advanced parser is not available
+                    content_lines = self.format_message_basic(message);
                 }
+
+                let content = Paragraph::new(content_lines)
+                    .block(
+                        Block::default()
+                            .borders(Borders::ALL)
+                            .title("Message Content")
+                            .border_style(Style::default().fg(Color::Gray)),
+                    )
+                    .wrap(Wrap { trim: false })
+                    .scroll((conv.scroll_position as u16, 0));
+                f.render_widget(content, message_chunks[0]);
             }
 
             // Message list
@@ -3483,17 +3471,16 @@ impl TuiApp {
                 );
 
                 // Add search match info if available
-                if !self.conversation_search_query.is_empty() {
-                    if let Some(ref conv) = self.selected_conversation {
-                        if !conv.search_matches.is_empty() {
-                            base_text = format!(
-                                "{} | Matches: {}/{}",
-                                base_text,
-                                conv.current_search_match + 1,
-                                conv.search_matches.len()
-                            );
-                        }
-                    }
+                if !self.conversation_search_query.is_empty()
+                    && let Some(ref conv) = self.selected_conversation
+                    && !conv.search_matches.is_empty()
+                {
+                    base_text = format!(
+                        "{} | Matches: {}/{}",
+                        base_text,
+                        conv.current_search_match + 1,
+                        conv.search_matches.len()
+                    );
                 }
 
                 base_text
@@ -3560,7 +3547,7 @@ impl TuiApp {
         f.render_widget(stats, chunks[2]);
     }
 
-    fn create_cost_trend_chart(&self) -> Vec<Line> {
+    fn create_cost_trend_chart(&self) -> Vec<Line<'_>> {
         let mut lines = vec![];
 
         // Take last 14 days and create a simple bar chart
@@ -3598,7 +3585,7 @@ impl TuiApp {
         lines
     }
 
-    fn create_token_usage_chart(&self) -> Vec<Line> {
+    fn create_token_usage_chart(&self) -> Vec<Line<'_>> {
         let mut lines = vec![];
 
         let total = self.daily_report.totals.total_tokens as f64;
@@ -3654,7 +3641,7 @@ impl TuiApp {
         lines
     }
 
-    fn create_usage_stats(&self) -> Vec<Line> {
+    fn create_usage_stats(&self) -> Vec<Line<'_>> {
         let mut lines = vec![];
 
         // Calculate some interesting statistics
@@ -4865,7 +4852,7 @@ impl TuiApp {
             let mut result = String::new();
 
             for (i, c) in chars.iter().enumerate() {
-                if i > 0 && (chars.len() - i) % 3 == 0 {
+                if i > 0 && (chars.len() - i).is_multiple_of(3) {
                     result.push(',');
                 }
                 result.push(*c);
@@ -5031,50 +5018,50 @@ impl TuiApp {
         match self.current_tab {
             Tab::Resume => {
                 // Open Claude session in browser
-                if let Some(selected) = self.resume_table_state.selected() {
-                    if let Some(resume_session) = self.resume_sessions.get(selected) {
-                        if let Some(session_data) = &resume_session.session_data {
-                            let parser = ClaudeSessionParser::new(None);
-                            match parser.open_session(session_data) {
-                                Ok(_) => {
-                                    self.status_message =
-                                        Some("🚀 Opening session in browser...".to_string());
-                                }
-                                Err(e) => {
-                                    self.status_message =
-                                        Some(format!("❌ Failed to open session: {}", e));
-                                }
+                if let Some(selected) = self.resume_table_state.selected()
+                    && let Some(resume_session) = self.resume_sessions.get(selected)
+                {
+                    if let Some(session_data) = &resume_session.session_data {
+                        let parser = ClaudeSessionParser::new(None);
+                        match parser.open_session(session_data) {
+                            Ok(_) => {
+                                self.status_message =
+                                    Some("🚀 Opening session in browser...".to_string());
                             }
-                        } else {
-                            self.status_message =
-                                Some("ℹ️ This is a demo session (no real data)".to_string());
+                            Err(e) => {
+                                self.status_message =
+                                    Some(format!("❌ Failed to open session: {}", e));
+                            }
                         }
+                    } else {
+                        self.status_message =
+                            Some("ℹ️ This is a demo session (no real data)".to_string());
                     }
                 }
             }
             Tab::Sessions => {
                 // Copy session info to clipboard
-                if let Some(selected) = self.session_table_state.selected() {
-                    if let Some(session) = self.session_report.sessions.get(selected) {
-                        let info = format!(
-                            "Project: {}, Session: {}, Cost: ${:.4}, Tokens: {}",
-                            session.project_path,
-                            session.session_id,
-                            session.total_cost,
-                            session.total_tokens
-                        );
+                if let Some(selected) = self.session_table_state.selected()
+                    && let Some(session) = self.session_report.sessions.get(selected)
+                {
+                    let info = format!(
+                        "Project: {}, Session: {}, Cost: ${:.4}, Tokens: {}",
+                        session.project_path,
+                        session.session_id,
+                        session.total_cost,
+                        session.total_tokens
+                    );
 
-                        if let Ok(mut ctx) = ClipboardContext::new() {
-                            if ctx.set_contents(info.clone()).is_ok() {
-                                self.status_message =
-                                    Some("📋 Copied session info to clipboard".to_string());
-                            } else {
-                                self.status_message =
-                                    Some("❌ Failed to copy to clipboard".to_string());
-                            }
+                    if let Ok(mut ctx) = ClipboardContext::new() {
+                        if ctx.set_contents(info.clone()).is_ok() {
+                            self.status_message =
+                                Some("📋 Copied session info to clipboard".to_string());
                         } else {
-                            self.status_message = Some("❌ Clipboard not available".to_string());
+                            self.status_message =
+                                Some("❌ Failed to copy to clipboard".to_string());
                         }
+                    } else {
+                        self.status_message = Some("❌ Clipboard not available".to_string());
                     }
                 }
             }

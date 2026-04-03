@@ -421,6 +421,7 @@ mod tests {
                 cache_creation_tokens: 0,
                 cache_read_tokens: 0,
                 total_cost: 0.15 + ((9 - i) as f64 * 0.01), // Increasing cost over time
+                fast_mode_cost: 0.0,
             };
             daily_usage.insert(date, usage);
         }
@@ -446,6 +447,7 @@ mod tests {
                 cache_creation_tokens: 0,
                 cache_read_tokens: 0,
                 total_cost: 1.0,
+                fast_mode_cost: 0.0,
             };
             daily_usage.insert(date, usage);
         }

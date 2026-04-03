@@ -313,6 +313,7 @@ impl ConversationParser {
             cache_creation_tokens,
             cache_read_tokens,
             total_cost: 0.0,
+            fast_mode_cost: 0.0,
         };
 
         Ok(Some(usage))
@@ -383,11 +384,12 @@ impl Conversation {
 
         // Find all children
         for (idx, message) in self.messages.iter().enumerate() {
-            if let Some(ref parent_uuid) = message.parent_uuid {
-                if parent_uuid == &root_message.uuid && !processed.contains(&idx) {
-                    let child_thread = self.build_thread(idx, processed);
-                    thread.children.push(child_thread);
-                }
+            if let Some(ref parent_uuid) = message.parent_uuid
+                && parent_uuid == &root_message.uuid
+                && !processed.contains(&idx)
+            {
+                let child_thread = self.build_thread(idx, processed);
+                thread.children.push(child_thread);
             }
         }
 
@@ -401,14 +403,14 @@ impl Conversation {
         for message in &self.messages {
             if message.role == "assistant" {
                 for content in &message.content {
-                    if let MessageContentBlock::Text { content_type, text } = content {
-                        if content_type == "thinking" {
-                            thinking_blocks.push(ThinkingBlock {
-                                message_uuid: message.uuid.clone(),
-                                timestamp: message.timestamp,
-                                content: text.clone(),
-                            });
-                        }
+                    if let MessageContentBlock::Text { content_type, text } = content
+                        && content_type == "thinking"
+                    {
+                        thinking_blocks.push(ThinkingBlock {
+                            message_uuid: message.uuid.clone(),
+                            timestamp: message.timestamp,
+                            content: text.clone(),
+                        });
                     }
                 }
             }

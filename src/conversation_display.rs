@@ -223,16 +223,16 @@ impl ConversationDisplay {
         }
 
         // Token usage (if available and in detailed mode)
-        if self.mode == DisplayMode::Detailed {
-            if let Some(ref usage) = message.usage {
-                output.push_str(&format!(
-                    "{}  {} tokens: {} in, {} out\n",
-                    indent,
-                    "📊".dimmed(),
-                    usage.input_tokens.to_string().dimmed(),
-                    usage.output_tokens.to_string().dimmed()
-                ));
-            }
+        if self.mode == DisplayMode::Detailed
+            && let Some(ref usage) = message.usage
+        {
+            output.push_str(&format!(
+                "{}  {} tokens: {} in, {} out\n",
+                indent,
+                "📊".dimmed(),
+                usage.input_tokens.to_string().dimmed(),
+                usage.output_tokens.to_string().dimmed()
+            ));
         }
 
         output.push('\n');
@@ -459,18 +459,17 @@ impl ConversationDisplay {
         if let Some(text) = &part.text {
             if part.content_type == "tool_use" {
                 // Try to parse as JSON for tool use
-                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(text) {
-                    if let (Some(name), Some(input)) =
+                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(text)
+                    && let (Some(name), Some(input)) =
                         (json_value.get("name"), json_value.get("input"))
-                    {
-                        output.push_str(&self.format_tool_use_block(
-                            "tool",
-                            name.to_string().trim_matches('"'),
-                            input,
-                            "  ",
-                        ));
-                        return output;
-                    }
+                {
+                    output.push_str(&self.format_tool_use_block(
+                        "tool",
+                        name.to_string().trim_matches('"'),
+                        input,
+                        "  ",
+                    ));
+                    return output;
                 }
             }
 
@@ -895,16 +894,16 @@ impl ConversationDisplay {
         }
 
         // Add token usage if available
-        if self.mode == DisplayMode::Detailed {
-            if let Some(ref usage) = message.usage {
-                lines.push(Line::from(vec![
-                    Span::styled("📊 Tokens: ", Style::default().fg(Color::Yellow)),
-                    Span::styled(
-                        format!("{} in, {} out", usage.input_tokens, usage.output_tokens),
-                        Style::default().fg(Color::Gray),
-                    ),
-                ]));
-            }
+        if self.mode == DisplayMode::Detailed
+            && let Some(ref usage) = message.usage
+        {
+            lines.push(Line::from(vec![
+                Span::styled("📊 Tokens: ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{} in, {} out", usage.input_tokens, usage.output_tokens),
+                    Style::default().fg(Color::Gray),
+                ),
+            ]));
         }
 
         Text::from(lines)

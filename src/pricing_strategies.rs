@@ -76,6 +76,39 @@ impl FallbackPricingStrategy {
             },
         );
 
+        // Claude Opus 4.6
+        pricing.insert(
+            "claude-opus-4-6-20260310".to_string(),
+            PricingModel {
+                input_cost_per_token: 15.0 / 1_000_000.0,
+                output_cost_per_token: 75.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 18.75 / 1_000_000.0,
+                cache_read_cost_per_token: 1.5 / 1_000_000.0,
+            },
+        );
+
+        // Claude Sonnet 4.6
+        pricing.insert(
+            "claude-sonnet-4-6-20260310".to_string(),
+            PricingModel {
+                input_cost_per_token: 3.0 / 1_000_000.0,
+                output_cost_per_token: 15.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 3.75 / 1_000_000.0,
+                cache_read_cost_per_token: 0.3 / 1_000_000.0,
+            },
+        );
+
+        // Claude Haiku 4.5
+        pricing.insert(
+            "claude-haiku-4-5-20251001".to_string(),
+            PricingModel {
+                input_cost_per_token: 0.8 / 1_000_000.0,
+                output_cost_per_token: 4.0 / 1_000_000.0,
+                cache_creation_cost_per_token: 1.0 / 1_000_000.0,
+                cache_read_cost_per_token: 0.08 / 1_000_000.0,
+            },
+        );
+
         pricing
     }
 
@@ -171,10 +204,10 @@ impl ConfigurablePricingStrategy {
 
         // エイリアスマッチング
         for pricing in self.pricing_data.values() {
-            if let Some(aliases) = &pricing.aliases {
-                if aliases.iter().any(|alias| alias == model_name) {
-                    return Some(pricing);
-                }
+            if let Some(aliases) = &pricing.aliases
+                && aliases.iter().any(|alias| alias == model_name)
+            {
+                return Some(pricing);
             }
         }
 

@@ -6,6 +6,7 @@
 // Module declarations
 mod billing_blocks;
 mod burn_rate;
+mod cache_analysis;
 mod claude_sessions;
 mod config;
 mod config_v2;
@@ -68,11 +69,51 @@ use tui::TuiApp;
 use watcher::UsageWatcher;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum CliCostMode {
+    /// Use costUSD from JSONL if available, otherwise calculate from tokens
+    Auto,
+    /// Always recalculate cost from token counts and model pricing
+    Calculate,
+    /// Only use costUSD field from JSONL data
+    Display,
+}
+
+impl From<CliCostMode> for parser::CostMode {
+    fn from(mode: CliCostMode) -> Self {
+        match mode {
+            CliCostMode::Auto => parser::CostMode::Auto,
+            CliCostMode::Calculate => parser::CostMode::Calculate,
+            CliCostMode::Display => parser::CostMode::Display,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum SortOrder {
     /// Sort in ascending order
     Asc,
     /// Sort in descending order
     Desc,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum CacheSortField {
+    /// Sort by write cost (default)
+    WriteCost,
+    /// Sort by cache hit rate
+    HitRate,
+    /// Sort by 5m TTL miss tokens
+    #[value(name = "miss-5m")]
+    Miss5m,
+    /// Sort by 60m TTL miss tokens
+    #[value(name = "miss-60m")]
+    Miss60m,
+    /// Sort by cold start tokens
+    ColdStart,
+    /// Sort by normal churn tokens
+    NormalChurn,
+    /// Sort by break-even turn (ascending)
+    BreakevenTurn,
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -94,21 +135,20 @@ pub enum SortField {
 #[command(
     about = "Claude Code usage analytics tool - Analyze token usage, costs, and session patterns"
 )]
-#[command(version = "0.4.1")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(
     long_about = "Claudelytics analyzes Claude Code usage patterns and costs by parsing JSONL files from ~/.claude/projects/.
 
 EXAMPLES:
-  claudelytics                    # Show today's usage in enhanced format
+  claudelytics                    # Today's usage (compact table)
   claudelytics --today --json     # Today's usage as JSON
-  claudelytics daily --since 20240101  # Daily report from Jan 1, 2024
-  claudelytics session --classic  # Classic table format for sessions
-  claudelytics cost --today       # Quick cost check for today
-  claudelytics interactive        # Browse sessions interactively
-  claudelytics export --daily -o report  # Export daily data to CSV
-  claudelytics config --show      # View current configuration
-  claudelytics tui                # Launch terminal interface
-  claudelytics watch              # Monitor usage in real-time
+  claudelytics daily --since 20260101  # Daily report from date
+  claudelytics weekly             # Weekly usage summary
+  claudelytics session            # Usage by session
+  claudelytics monthly            # Monthly aggregation
+  claudelytics billing-blocks     # 5-hour billing blocks
+  claudelytics tui                # Interactive terminal UI
+  claudelytics -v daily           # Verbose with burn rates
 
 GLOBAL FLAGS:
   Global flags like --json, --today, --since work with any command:
@@ -162,24 +202,33 @@ struct Cli {
     )]
     today: bool,
 
+    #[arg(long, help = "Show last 7 days")]
+    last_7d: bool,
+
+    #[arg(long, help = "Show last 30 days")]
+    last_30d: bool,
+
     #[arg(
         long,
         help = "Use classic table format",
-        long_help = "Use classic table format instead of enhanced cards\nPrimary interface: Traditional ASCII tables\nDefault: Enhanced format with visual cards and summaries"
+        long_help = "Use classic table format instead of enhanced cards\nPrimary interface: Traditional ASCII tables\nDefault: Enhanced format with visual cards and summaries",
+        hide = true
     )]
     classic: bool,
 
     #[arg(
         long,
         help = "Force compact display mode",
-        long_help = "Force compact display mode for narrow terminals\nReduces columns shown in tables to fit smaller screens\nAutomatic: Adapts based on terminal width\nWith --compact: Always use minimal columns"
+        long_help = "Force compact display mode for narrow terminals\nReduces columns shown in tables to fit smaller screens\nAutomatic: Adapts based on terminal width\nWith --compact: Always use minimal columns",
+        hide = true
     )]
     compact: bool,
 
     #[arg(
         long,
         help = "Launch terminal user interface",
-        long_help = "Launch interactive terminal user interface (TUI)\nFeatures: Navigation, search, charts, multiple tabs\nKeyboard shortcuts: j/k navigation, q to quit, ? for help"
+        long_help = "Launch interactive terminal user interface (TUI)\nFeatures: Navigation, search, charts, multiple tabs\nKeyboard shortcuts: j/k navigation, q to quit, ? for help",
+        hide = true
     )]
     tui: bool,
 
@@ -201,24 +250,42 @@ struct Cli {
     #[arg(
         long,
         help = "Show usage breakdown by model family",
-        long_help = "Automatically categorize and display usage by model families (Opus, Sonnet, Haiku)\nShows cost and token usage for each model type in a single view\nCombines with other filters: --today, --since, --until"
+        long_help = "Automatically categorize and display usage by model families (Opus, Sonnet, Haiku)\nShows cost and token usage for each model type in a single view\nCombines with other filters: --today, --since, --until",
+        hide = true
     )]
     by_model: bool,
 
     #[arg(
         long,
         help = "Use responsive table layout",
-        long_help = "Use responsive tables that automatically adjust to terminal width\nFeatures: Auto-adjusting columns, smart column hiding, abbreviated headers\nPriorities: Date/Cost always shown, cache tokens hidden first\nCombines with daily, session, and billing-blocks commands"
+        long_help = "Use responsive tables that automatically adjust to terminal width\nFeatures: Auto-adjusting columns, smart column hiding, abbreviated headers\nPriorities: Date/Cost always shown, cache tokens hidden first\nCombines with daily, session, and billing-blocks commands",
+        hide = true
     )]
     responsive: bool,
     #[arg(
         long,
         help = "Show real-time analytics",
-        long_help = "Display real-time analytics alongside regular reports\nAdds burn rates, budget projections, and efficiency metrics\nWorks with daily and session commands\nExample: claudelytics daily --realtime"
+        long_help = "Display real-time analytics alongside regular reports\nAdds burn rates, budget projections, and efficiency metrics\nWorks with daily and session commands\nExample: claudelytics daily --realtime",
+        hide = true
     )]
     realtime: bool,
-    // #[arg(long, help = "Launch analytics studio TUI", long_help = "Launch comprehensive analytics studio with AI insights\nFeatures: Pattern analysis, predictive modeling, ML insights, risk management\nKeyboard shortcuts: F10-F12 for analytics tabs, advanced data exploration")]
-    // analytics_tui: bool, // Temporarily disabled - work in progress
+
+    #[arg(
+        long,
+        value_enum,
+        default_value = "auto",
+        help = "Cost calculation mode",
+        long_help = "Control how costs are calculated:\n  auto: Use costUSD from JSONL if present, otherwise calculate\n  calculate: Always recalculate from token counts and pricing\n  display: Only show costUSD field from JSONL data"
+    )]
+    cost_mode: CliCostMode,
+
+    #[arg(
+        short,
+        long,
+        help = "Show detailed output with burn rate and trends",
+        long_help = "Show detailed enhanced output with burn rate analysis,\nactivity trends, and efficiency metrics.\nDefault output is a compact table."
+    )]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -271,12 +338,12 @@ enum Commands {
         )]
         sort_order: Option<SortOrder>,
     },
-    #[command(about = "Interactive session selector (peco-style)")]
+    #[command(about = "Interactive session selector (peco-style)", hide = true)]
     #[command(
         long_about = "Launch interactive session browser with fuzzy search\n\nProvides a searchable, filterable interface to browse and select\nsessions. Type to filter, use arrow keys to navigate, Enter to select.\n\nFEATURES:\n  - Fuzzy search across project paths and session IDs\n  - Real-time filtering as you type\n  - Shows session metadata (tokens, cost, last activity)\n  - Keyboard navigation (arrows, Enter, Esc)\n\nEXAMPLE:\n  claudelytics interactive              # Launch interactive browser"
     )]
     Interactive,
-    #[command(about = "Watch for real-time usage updates")]
+    #[command(about = "Watch for real-time usage updates", hide = true)]
     #[command(
         long_about = "Monitor Claude Code usage in real-time\n\nWatches the Claude directory for new usage data and displays\nupdates as they occur. Useful for monitoring active sessions.\n\nFEATURES:\n  - Real-time file monitoring\n  - Automatic data refresh\n  - Debounced updates (avoids spam)\n  - Graceful interruption with Ctrl+C\n\nEXAMPLE:\n  claudelytics watch                    # Start monitoring"
     )]
@@ -344,6 +411,24 @@ enum Commands {
         )]
         sort_order: Option<SortOrder>,
     },
+    #[command(about = "Show usage aggregated by weeks")]
+    #[command(
+        long_about = "Show usage aggregated by weeks\n\nDisplays weekly summaries with total usage, active days,\nand average daily costs. Configurable week start day.\n\nEXAMPLES:\n  claudelytics weekly                   # Weekly report (weeks start Monday)\n  claudelytics weekly --start-of-week sunday  # Weeks start Sunday\n  claudelytics --json weekly            # JSON output"
+    )]
+    Weekly {
+        #[arg(long, help = "Use classic table format")]
+        classic: bool,
+        #[arg(long, help = "Sort field")]
+        sort_by: Option<SortField>,
+        #[arg(long, help = "Sort order")]
+        sort_order: Option<SortOrder>,
+        #[arg(
+            long,
+            default_value = "monday",
+            help = "Start of week (monday or sunday)"
+        )]
+        start_of_week: String,
+    },
     #[command(about = "Manage configuration")]
     #[command(
         long_about = "Manage Claudelytics configuration settings\n\nConfiguration is stored in YAML format and persists between runs.\nUse --show to view current settings or modify specific options.\n\nCONFIG LOCATION:\n  ~/.config/claudelytics/config.yaml (or platform equivalent)\n\nAVAILABLE SETTINGS:\n  - Claude directory path\n  - Default output format (enhanced/classic/json)\n  - Default command\n  - Watch interval for real-time monitoring\n  - Export directory\n  - Date format preferences\n\nEXAMPLES:\n  claudelytics config --show            # View current configuration\n  claudelytics config --set-path ~/claude # Set custom Claude directory\n  claudelytics config --reset           # Reset to defaults"
@@ -368,7 +453,7 @@ enum Commands {
         )]
         set_path: Option<PathBuf>,
     },
-    #[command(about = "Show cost summary")]
+    #[command(about = "Show cost summary", hide = true)]
     #[command(
         long_about = "Display cost analysis and summaries\n\nQuick access to cost information without full reports.\nUseful for monitoring expenses and budget tracking.\n\nCOST CALCULATION:\n  Based on Claude API pricing for input/output tokens\n  Includes cache creation and cache read tokens\n  Costs shown in USD\n\nEXAMPLES:\n  claudelytics cost                     # Total cost summary\n  claudelytics cost --today             # Today's cost only\n  claudelytics cost --date 20240315     # Specific date cost\n\nSHELL INTEGRATION:\n  alias ctoday='claudelytics cost --today'\n  alias ctotal='claudelytics cost'"
     )]
@@ -404,7 +489,52 @@ enum Commands {
         )]
         summary: bool,
     },
-    #[command(about = "Start Model Context Protocol (MCP) server")]
+    #[command(about = "Analyze cache behavior and TTL efficiency")]
+    #[command(
+        long_about = "Analyze per-turn cache behavior across sessions\n\nBreaks down cache writes by TTL bucket (5m vs 60m expiry), identifies\ncold start costs, and computes the cache balance point per session.\n\nEXAMPLES:\n  claudelytics cache                    # Cache analysis summary\n  claudelytics cache --top 20           # Show top 20 sessions\n  claudelytics --today cache            # Today only (global flag)\n  claudelytics --json cache             # JSON output (global flag)\n  claudelytics --project myproj cache   # Filter by project (global flag)"
+    )]
+    Cache {
+        #[arg(
+            long,
+            default_value = "10",
+            help = "Number of sessions to show in detail"
+        )]
+        top: usize,
+
+        #[arg(long, default_value = "10", help = "Number of projects to show")]
+        top_projects: usize,
+
+        #[arg(long, help = "Filter by project path substring")]
+        project: Option<String>,
+
+        #[arg(long, default_value = "write-cost", help = "Sort sessions by field")]
+        sort: CacheSortField,
+
+        #[arg(long, help = "Sort ascending")]
+        asc: bool,
+
+        #[arg(long, help = "Sort descending")]
+        desc: bool,
+
+        #[arg(
+            long,
+            default_value = "0.92",
+            value_name = "RATIO",
+            help = "Cache hit rate threshold for warmup detection (0.0-1.0)"
+        )]
+        threshold: f64,
+
+        #[arg(
+            long,
+            value_name = "PCT",
+            help = "Min cache hit rate % to show (e.g. 90)"
+        )]
+        min_hit: Option<f64>,
+
+        #[arg(long, value_name = "PCT", help = "Min churn rate % to show (e.g. 50)")]
+        min_churn: Option<f64>,
+    },
+    #[command(about = "Start Model Context Protocol (MCP) server", hide = true)]
     #[command(
         long_about = "Start an MCP server to expose claudelytics data via the Model Context Protocol\n\nThe MCP server allows other applications to query claudelytics data through\na standardized protocol. Supports both stdio and HTTP transport methods.\n\nEXAMPLES:\n  claudelytics mcp-server                # Start stdio server\n  claudelytics mcp-server --http 8080    # Start HTTP server on port 8080\n  claudelytics mcp-server --list-tools   # Show available MCP tools\n  claudelytics mcp-server --list-resources # Show available MCP resources"
     )]
@@ -428,13 +558,13 @@ enum Commands {
         )]
         list_resources: bool,
     },
-    #[command(about = "Debug resume state")]
+    #[command(about = "Debug resume state", hide = true)]
     #[command(long_about = "Debug command to show TUI session state information")]
     DebugState,
-    #[command(about = "Test resume functionality")]
+    #[command(about = "Test resume functionality", hide = true)]
     #[command(long_about = "Test command to verify resume functionality without starting TUI")]
     TestResume,
-    #[command(about = "Manage offline pricing cache")]
+    #[command(about = "Manage offline pricing cache", hide = true)]
     #[command(
         long_about = "Manage the offline pricing cache for model costs\n\nThe pricing cache allows claudelytics to work without internet connection\nby storing model pricing data locally. The cache is automatically updated\nwhen online and remains valid for 7 days.\n\nEXAMPLES:\n  claudelytics pricing-cache --show    # Show current cache status\n  claudelytics pricing-cache --clear   # Clear the cache\n  claudelytics pricing-cache --update  # Force update the cache"
     )]
@@ -458,7 +588,7 @@ enum Commands {
         )]
         update: bool,
     },
-    #[command(about = "Show session blocks (configurable time windows)")]
+    #[command(about = "Show session blocks (configurable time windows)", hide = true)]
     #[command(
         long_about = "Analyze usage in configurable session blocks\n\nSession blocks provide flexible time-based analysis similar to billing blocks\nbut with customizable durations. Default is 8-hour blocks.\n\nFEATURES:\n  - Configurable block duration (default: 8 hours)\n  - Active session tracking with burn rate\n  - Usage projections based on current activity\n  - Time to limit calculations\n\nEXAMPLES:\n  claudelytics blocks                  # Show all session blocks\n  claudelytics blocks --active         # Show only active sessions\n  claudelytics blocks --length 4       # Use 4-hour blocks\n  claudelytics blocks --recent         # Show last 30 days\n  claudelytics blocks --live           # Live monitoring mode"
     )]
@@ -508,7 +638,7 @@ enum Commands {
         )]
         cost_limit: Option<f64>,
     },
-    #[command(about = "Show usage projections and forecasts")]
+    #[command(about = "Show usage projections and forecasts", hide = true)]
     #[command(
         long_about = "Project future usage based on historical patterns\n\nProjections analyze your usage history to forecast future token consumption\nand costs. Includes trend analysis, growth rates, and limit predictions.\n\nFEATURES:\n  - Daily, weekly, and monthly averages\n  - Trend detection (increasing/decreasing/stable)\n  - Confidence intervals for projections\n  - Time to limit calculations\n  - Cost estimates for future periods\n\nEXAMPLES:\n  claudelytics projections             # Show 30-day projection\n  claudelytics projections --days 90   # Project 90 days ahead\n  claudelytics projections --json      # JSON output for scripts"
     )]
@@ -539,7 +669,7 @@ enum Commands {
         )]
         json: bool,
     },
-    #[command(about = "Advanced session analytics")]
+    #[command(about = "Advanced session analytics", hide = true)]
     #[command(
         long_about = "Analyze session patterns and behaviors in depth\n\nProvides detailed insights into:\n  - Time of day usage patterns\n  - Day of week trends\n  - Session duration analysis\n  - Usage frequency and streaks\n  - Cost efficiency metrics\n\nEXAMPLES:\n  claudelytics analytics              # Show all analytics\n  claudelytics analytics --time-of-day # Time patterns only\n  claudelytics analytics --efficiency  # Cost efficiency analysis"
     )]
@@ -582,7 +712,10 @@ enum Commands {
         )]
         threshold: f64,
     },
-    #[command(about = "Real-time analytics with burn rates and projections")]
+    #[command(
+        about = "Real-time analytics with burn rates and projections",
+        hide = true
+    )]
     #[command(
         long_about = "Show comprehensive real-time analytics including burn rates and budget projections\n\nProvides detailed analytics on:\n  - Token and cost burn rates (per minute/hour/day)\n  - Budget projections and time to limits\n  - Session analytics and efficiency trends\n  - Usage alerts and recommendations\n\nFEATURES:\n  - Multi-window burn rate analysis (1hr, 3hr, 24hr)\n  - Budget utilization and projections\n  - Peak usage detection\n  - Efficiency scoring\n  - Smart alerts for unusual patterns\n\nEXAMPLES:\n  claudelytics realtime                # Show all real-time analytics\n  claudelytics realtime --json         # Output as JSON\n  claudelytics realtime --daily-limit 50  # Set $50 daily budget\n  claudelytics realtime --monthly-limit 1000  # Set $1000 monthly budget"
     )]
@@ -619,7 +752,7 @@ enum Commands {
         )]
         json: bool,
     },
-    #[command(about = "Live dashboard for real-time monitoring")]
+    #[command(about = "Live dashboard for real-time monitoring", hide = true)]
     #[command(
         long_about = "Launch live dashboard for real-time token usage monitoring\n\nProvides a continuously updating view of:\n  - Real-time token burn rate (tokens/minute, tokens/hour)\n  - Active session progress tracking\n  - Cost projections based on current usage rate\n  - Estimated time to reach daily/monthly limits\n  - Auto-refresh display every 5 seconds\n\nFEATURES:\n  - Real-time burn rate calculation\n  - Active session monitoring\n  - Cost accumulation tracking\n  - Limit warnings and alerts\n  - Configurable refresh interval\n\nEXAMPLES:\n  claudelytics live                    # Start live dashboard\n  claudelytics live --refresh 10       # Update every 10 seconds\n  claudelytics live --token-limit 1000000  # Set token limit\n  claudelytics live --cost-limit 50    # Set daily cost limit ($50)"
     )]
@@ -732,7 +865,10 @@ enum Commands {
         )]
         list: bool,
     },
-    #[command(about = "View conversation content (alias for conversation)")]
+    #[command(
+        about = "View conversation content (alias for conversation)",
+        hide = true
+    )]
     #[command(
         long_about = "View full conversation content from Claude sessions\n\nThis is an alias for the 'conversation' command with simplified options.\nProvides quick access to view conversations by session ID or project.\n\nEXAMPLES:\n  claudelytics view abc123              # View specific session\n  claudelytics view --project myproj    # View conversations from project\n  claudelytics view --recent            # View recent conversations\n  claudelytics view --list              # List available conversations"
     )]
@@ -777,7 +913,7 @@ enum Commands {
         )]
         output: Option<PathBuf>,
     },
-    #[command(about = "Inspect session details and metadata")]
+    #[command(about = "Inspect session details and metadata", hide = true)]
     #[command(
         long_about = "Inspect detailed session information including metadata and statistics\n\nProvides comprehensive information about sessions including:\n  - Session metadata (ID, project, timestamps)\n  - Token usage breakdown by model\n  - Cost analysis and efficiency metrics\n  - Conversation count and structure\n  - Activity timeline\n\nEXAMPLES:\n  claudelytics inspect abc123           # Inspect specific session\n  claudelytics inspect --project myproj # Inspect sessions from project\n  claudelytics inspect --recent         # Inspect recent sessions\n  claudelytics inspect --json           # Output as JSON"
     )]
@@ -873,20 +1009,58 @@ fn run() -> Result<()> {
     // Load configuration
     let mut config = Config::load().unwrap_or_default();
 
-    // Get Claude directory path
-    let claude_dir = if let Some(path) = cli.path {
-        path
+    // Get Claude directory paths (supports both legacy ~/.claude and XDG ~/.config/claude)
+    let (claude_dir, claude_dirs) = if let Some(path) = cli.path {
+        (path.clone(), vec![path])
     } else {
-        config.get_claude_path().unwrap_or_else(|_| {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            PathBuf::from(home).join(".claude")
-        })
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let legacy = PathBuf::from(&home).join(".claude");
+        let xdg = PathBuf::from(&home).join(".config").join("claude");
+
+        let mut dirs = Vec::new();
+        if legacy.exists() {
+            dirs.push(legacy.clone());
+        }
+        if xdg.exists() {
+            dirs.push(xdg.clone());
+        }
+
+        // Primary dir: prefer config, then legacy, then XDG
+        let primary = config.get_claude_path().unwrap_or_else(|_| {
+            if legacy.exists() {
+                legacy.clone()
+            } else if xdg.exists() {
+                xdg
+            } else {
+                legacy // default for error message
+            }
+        });
+
+        if dirs.is_empty() {
+            dirs.push(primary.clone());
+        }
+
+        (primary, dirs)
     };
 
-    // Handle --today flag by setting since and until to today
+    // Handle date shortcut flags: today > last_7d > last_30d > explicit
     let (since_date, until_date) = if cli.today {
         let today = Local::now().date_naive().format("%Y%m%d").to_string();
         (Some(today.clone()), Some(today))
+    } else if cli.last_7d {
+        let today = Local::now().date_naive();
+        let since = (today - chrono::Duration::days(6))
+            .format("%Y%m%d")
+            .to_string();
+        let until = today.format("%Y%m%d").to_string();
+        (Some(since), Some(until))
+    } else if cli.last_30d {
+        let today = Local::now().date_naive();
+        let since = (today - chrono::Duration::days(29))
+            .format("%Y%m%d")
+            .to_string();
+        let until = today.format("%Y%m%d").to_string();
+        (Some(since), Some(until))
     } else {
         (cli.since, cli.until)
     };
@@ -901,20 +1075,27 @@ fn run() -> Result<()> {
         return handle_config_command(&mut config, *show, *reset, set_path.clone());
     }
 
-    // Validate Claude directory exists
-    if !claude_dir.exists() {
+    // Validate at least one Claude directory exists
+    let any_dir_exists = claude_dirs.iter().any(|d| d.exists());
+    if !any_dir_exists {
         anyhow::bail!(
-            "Claude directory not found at {}\nHint: Make sure Claude Code is installed and has been used at least once.",
-            claude_dir.display()
+            "Claude directory not found at {}\nHint: Make sure Claude Code is installed and has been used at least once.\nSearched: {}",
+            claude_dir.display(),
+            claude_dirs
+                .iter()
+                .map(|d| d.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 
-    // Create parser
-    let parser = UsageParser::new(
-        claude_dir.clone(),
+    // Create parser with all discovered directories
+    let parser = UsageParser::new_multi(
+        claude_dirs,
         since_date.clone(),
         until_date.clone(),
         cli.model_filter.clone(),
+        cli.cost_mode.into(),
     )?;
 
     // Handle watch command
@@ -1000,11 +1181,11 @@ fn run() -> Result<()> {
         let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
 
         // Try to restore previous session state
-        if let Ok(state) = TuiSessionState::load() {
-            if state.should_resume() {
-                restore_tui_state(&mut tui_app, &state);
-                tui_app.set_restored_state();
-            }
+        if let Ok(state) = TuiSessionState::load()
+            && state.should_resume()
+        {
+            restore_tui_state(&mut tui_app, &state);
+            tui_app.set_restored_state();
         }
 
         let result = tui_app.run();
@@ -1049,8 +1230,10 @@ fn run() -> Result<()> {
                 display_daily_report_responsive(&daily_report);
             } else if cli.classic || classic {
                 display_daily_report_table(&daily_report);
-            } else {
+            } else if cli.verbose {
                 display_daily_report_enhanced(&daily_report, cli.compact);
+            } else {
+                display::display_daily_report_compact(&daily_report);
             }
 
             // Show real-time analytics if requested
@@ -1129,6 +1312,41 @@ fn run() -> Result<()> {
                 display_monthly_report_enhanced(&monthly_report);
             }
         }
+        Commands::Weekly {
+            classic,
+            sort_by,
+            sort_order,
+            start_of_week,
+        } => {
+            let weekday = match start_of_week.to_lowercase().as_str() {
+                "monday" | "mon" => chrono::Weekday::Mon,
+                "sunday" | "sun" => chrono::Weekday::Sun,
+                other => {
+                    print_error(&format!(
+                        "Invalid start-of-week '{}'. Use 'monday' or 'sunday'.",
+                        other
+                    ));
+                    return Ok(());
+                }
+            };
+
+            let weekly_report = reports::generate_weekly_report_sorted(
+                daily_map_clone.clone(),
+                convert_sort_field(sort_by),
+                convert_sort_order(sort_order),
+                weekday,
+            );
+
+            if weekly_report.weekly.is_empty() {
+                print_warning("No weekly usage data found for the specified date range");
+            } else if cli.json {
+                display::display_weekly_report_json(&weekly_report);
+            } else if cli.classic || classic {
+                display::display_weekly_report_table(&weekly_report);
+            } else {
+                display::display_weekly_report_enhanced(&weekly_report);
+            }
+        }
         Commands::Interactive => {
             if session_report.sessions.is_empty() {
                 print_warning("No session data found for interactive selection");
@@ -1151,11 +1369,11 @@ fn run() -> Result<()> {
             let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
 
             // Try to restore previous session state
-            if let Ok(state) = TuiSessionState::load() {
-                if state.should_resume() {
-                    restore_tui_state(&mut tui_app, &state);
-                    tui_app.set_restored_state();
-                }
+            if let Ok(state) = TuiSessionState::load()
+                && state.should_resume()
+            {
+                restore_tui_state(&mut tui_app, &state);
+                tui_app.set_restored_state();
             }
 
             let result = tui_app.run();
@@ -1238,6 +1456,39 @@ fn run() -> Result<()> {
                 frequency,
                 efficiency,
                 threshold,
+            )?;
+        }
+        Commands::Cache {
+            top,
+            top_projects,
+            project,
+            sort,
+            asc,
+            desc,
+            threshold,
+            min_hit,
+            min_churn,
+        } => {
+            let sort_asc = if asc {
+                Some(true)
+            } else if desc {
+                Some(false)
+            } else {
+                None
+            };
+            handle_cache_command(
+                &claude_dir,
+                since_date.as_deref(),
+                until_date.as_deref(),
+                project.as_deref(),
+                cli.json,
+                top,
+                top_projects,
+                convert_cache_sort_field(sort),
+                threshold,
+                sort_asc,
+                min_hit,
+                min_churn,
             )?;
         }
         Commands::Realtime {
@@ -2241,16 +2492,16 @@ fn handle_projections_command(
             projection.estimated_monthly_cost
         );
 
-        if let Some(days_until) = projection.days_until_limit {
-            if let Some(limit_date) = projection.limit_date {
-                let warning = if days_until <= 7 { "⚠️ " } else { "" };
-                println!(
-                    "{}Days Until Limit: {} ({})",
-                    warning,
-                    days_until,
-                    limit_date.format("%Y-%m-%d")
-                );
-            }
+        if let Some(days_until) = projection.days_until_limit
+            && let Some(limit_date) = projection.limit_date
+        {
+            let warning = if days_until <= 7 { "⚠️ " } else { "" };
+            println!(
+                "{}Days Until Limit: {} ({})",
+                warning,
+                days_until,
+                limit_date.format("%Y-%m-%d")
+            );
         }
 
         // Show projection details for key dates
@@ -2520,6 +2771,53 @@ fn handle_analytics_command(
     Ok(())
 }
 
+fn convert_cache_sort_field(field: CacheSortField) -> cache_analysis::CacheSortField {
+    match field {
+        CacheSortField::WriteCost => cache_analysis::CacheSortField::WriteCost,
+        CacheSortField::HitRate => cache_analysis::CacheSortField::HitRate,
+        CacheSortField::Miss5m => cache_analysis::CacheSortField::Miss5m,
+        CacheSortField::Miss60m => cache_analysis::CacheSortField::Miss60m,
+        CacheSortField::ColdStart => cache_analysis::CacheSortField::ColdStart,
+        CacheSortField::NormalChurn => cache_analysis::CacheSortField::NormalChurn,
+        CacheSortField::BreakevenTurn => cache_analysis::CacheSortField::BreakevenTurn,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_cache_command(
+    claude_dir: &Path,
+    since: Option<&str>,
+    until: Option<&str>,
+    project: Option<&str>,
+    json: bool,
+    top: usize,
+    top_projects: usize,
+    sort_field: cache_analysis::CacheSortField,
+    warmup_threshold: f64,
+    sort_asc: Option<bool>,
+    min_hit: Option<f64>,
+    min_churn: Option<f64>,
+) -> Result<()> {
+    use chrono::NaiveDate;
+    let since_date = since.and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
+    let until_date = until.and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
+    let threshold = warmup_threshold.clamp(0.5, 0.99);
+    let analysis =
+        cache_analysis::analyze_cache(claude_dir, since_date, until_date, project, threshold)?;
+    cache_analysis::display_cache_analysis(
+        &analysis,
+        json,
+        top,
+        top_projects,
+        sort_field,
+        threshold,
+        sort_asc,
+        min_hit,
+        min_churn,
+    );
+    Ok(())
+}
+
 /// Handle real-time analytics command
 fn handle_realtime_analytics_command(
     daily_map: &models::DailyUsageMap,
@@ -2590,11 +2888,11 @@ fn handle_conversation_command(
     if recent {
         let seven_days_ago = chrono::Utc::now() - chrono::Duration::days(7);
         conversation_files.retain(|path| {
-            if let Ok(metadata) = std::fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    let modified_time: chrono::DateTime<chrono::Utc> = modified.into();
-                    return modified_time > seven_days_ago;
-                }
+            if let Ok(metadata) = std::fs::metadata(path)
+                && let Ok(modified) = metadata.modified()
+            {
+                let modified_time: chrono::DateTime<chrono::Utc> = modified.into();
+                return modified_time > seven_days_ago;
             }
             false
         });

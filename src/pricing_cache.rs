@@ -128,10 +128,10 @@ impl CachedPricingFetcher {
     /// Get pricing data with cache support
     pub fn get_pricing_data(&self) -> &HashMap<String, ModelPricing> {
         // If we have a valid cache, use it
-        if let Some(ref cache) = self.cache {
-            if cache.is_valid() {
-                return &cache.pricing_data;
-            }
+        if let Some(ref cache) = self.cache
+            && cache.is_valid()
+        {
+            return &cache.pricing_data;
         }
 
         // Otherwise use fallback pricing
@@ -164,10 +164,10 @@ impl CachedPricingFetcher {
         let variations = Self::get_model_variations(model_name);
 
         for variation in &variations {
-            if !variation.is_empty() {
-                if let Some(pricing) = pricing_data.get(variation) {
-                    return Some(pricing);
-                }
+            if !variation.is_empty()
+                && let Some(pricing) = pricing_data.get(variation)
+            {
+                return Some(pricing);
             }
         }
 
@@ -190,13 +190,22 @@ impl CachedPricingFetcher {
             format!("claude-{}", model_name.trim_start_matches("claude-")),
             model_name.replace("claude-", ""),
             // Handle specific model mappings
-            if model_name.contains("sonnet-4") {
+            if model_name.contains("sonnet-4-6") || model_name.contains("sonnet-4.6") {
+                "claude-sonnet-4-6-20260310".to_string()
+            } else if model_name.contains("sonnet-4") {
                 "claude-sonnet-4-20250514".to_string()
             } else {
                 String::new()
             },
-            if model_name.contains("opus-4") {
+            if model_name.contains("opus-4-6") || model_name.contains("opus-4.6") {
+                "claude-opus-4-6-20260310".to_string()
+            } else if model_name.contains("opus-4") {
                 "claude-opus-4-20250514".to_string()
+            } else {
+                String::new()
+            },
+            if model_name.contains("haiku-4-5") || model_name.contains("haiku-4.5") {
+                "claude-haiku-4-5-20251001".to_string()
             } else {
                 String::new()
             },

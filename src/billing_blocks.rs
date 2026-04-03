@@ -216,6 +216,7 @@ impl BillingBlockManager {
             cache_creation_tokens: (total.cache_creation_tokens as f64 / count) as u64,
             cache_read_tokens: (total.cache_read_tokens as f64 / count) as u64,
             total_cost: total.total_cost / count,
+            fast_mode_cost: total.fast_mode_cost / count,
         }
     }
 }
@@ -347,6 +348,7 @@ mod tests {
             cache_creation_tokens: 0,
             cache_read_tokens: 0,
             total_cost: 0.001,
+            fast_mode_cost: 0.0,
         };
 
         let usage2 = TokenUsage {
@@ -355,6 +357,7 @@ mod tests {
             cache_creation_tokens: 0,
             cache_read_tokens: 0,
             total_cost: 0.002,
+            fast_mode_cost: 0.0,
         };
 
         manager.add_usage(time1, &usage1, Some("session1"));
