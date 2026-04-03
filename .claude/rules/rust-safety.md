@@ -1,12 +1,12 @@
 ---
 paths: ["src/**"]
-description: Rust-specific safety constraints beyond global security rules
+description: Claudelytics-specific Rust safety constraints (supplements global rust.md)
 ---
 
-# Rust Safety
+# Rust Safety (project-specific)
 
 ## Integer overflow
-- Use `checked_*` or `saturating_*` for arithmetic on user-derived values (token counts, costs)
+- Use `checked_*` or `saturating_*` for arithmetic on token counts and costs
 - Cast with `TryFrom` / `TryInto` instead of `as` for narrowing conversions
 
 ## Unsafe

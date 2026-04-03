@@ -17,8 +17,7 @@ cargo test -- --ignored               # integration tests with sample data
 
 ## Rules
 
-- [similarity](.claude/rules/similarity.md) — code duplication scanning
-- [workflow](.claude/rules/workflow.md) — pre/post-commit quality checks
+- [workflow](.claude/rules/workflow.md) — similarity scanning, post-commit actions
 - [rust-safety](.claude/rules/rust-safety.md) — integer overflow, unsafe, cargo audit
 
 ## Agents

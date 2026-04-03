@@ -1,15 +1,14 @@
 ---
 paths: ["src/**", "Cargo.toml"]
-description: Pre-commit quality checks and development workflow
+description: Claudelytics-specific workflow (supplements global rust.md quality commands)
 ---
 
-# Development Workflow
+# Development Workflow (project-specific)
 
-## Quality check order (run before commit)
-1. `cargo fmt`
-2. `cargo clippy -- -D warnings`
-3. `cargo test`
-4. `similarity-rs ./src --min-tokens 50`
+## Similarity scanning (additional pre-commit step)
+- After standard quality checks: `similarity-rs ./src --min-tokens 50`
+- Add `--skip-test` to exclude test functions
+- Create issues for significant duplication found
 
 ## Post-commit
 - Review similarity report to plan refactoring
