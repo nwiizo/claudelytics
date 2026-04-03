@@ -17,7 +17,6 @@ mod domain;
 mod error;
 mod export;
 mod helpers;
-mod interactive;
 mod live_dashboard;
 mod mcp;
 mod models;
@@ -54,7 +53,6 @@ use display::{
     print_warning,
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
-use interactive::InteractiveSelector;
 use models::SessionUsageMap;
 use parser::UsageParser;
 use projections::ProjectionCalculator;
@@ -338,11 +336,6 @@ enum Commands {
         )]
         sort_order: Option<SortOrder>,
     },
-    #[command(about = "Interactive session selector (peco-style)", hide = true)]
-    #[command(
-        long_about = "Launch interactive session browser with fuzzy search\n\nProvides a searchable, filterable interface to browse and select\nsessions. Type to filter, use arrow keys to navigate, Enter to select.\n\nFEATURES:\n  - Fuzzy search across project paths and session IDs\n  - Real-time filtering as you type\n  - Shows session metadata (tokens, cost, last activity)\n  - Keyboard navigation (arrows, Enter, Esc)\n\nEXAMPLE:\n  claudelytics interactive              # Launch interactive browser"
-    )]
-    Interactive,
     #[command(about = "Watch for real-time usage updates", hide = true)]
     #[command(
         long_about = "Monitor Claude Code usage in real-time\n\nWatches the Claude directory for new usage data and displays\nupdates as they occur. Useful for monitoring active sessions.\n\nFEATURES:\n  - Real-time file monitoring\n  - Automatic data refresh\n  - Debounced updates (avoids spam)\n  - Graceful interruption with Ctrl+C\n\nEXAMPLE:\n  claudelytics watch                    # Start monitoring"
@@ -1339,24 +1332,6 @@ fn run() -> Result<()> {
                 display::display_weekly_report_table(&weekly_report);
             } else {
                 display::display_weekly_report_enhanced(&weekly_report);
-            }
-        }
-        Commands::Interactive => {
-            if session_report.sessions.is_empty() {
-                print_warning("No session data found for interactive selection");
-            } else {
-                let mut selector = InteractiveSelector::new(session_report);
-                if let Some(selected_session) = selector.run()? {
-                    println!("\n📊 Selected Session Details:");
-                    println!(
-                        "Path: {}/{}",
-                        selected_session.project_path, selected_session.session_id
-                    );
-                    println!("Last Activity: {}", selected_session.last_activity);
-                    println!("Input Tokens: {}", selected_session.input_tokens);
-                    println!("Output Tokens: {}", selected_session.output_tokens);
-                    println!("Total Cost: ${:.6}", selected_session.total_cost);
-                }
             }
         }
         Commands::Tui => {

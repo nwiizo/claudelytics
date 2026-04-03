@@ -63,6 +63,7 @@ impl ConversationDisplay {
     }
 
     /// Set display mode (mutable reference version)
+    #[allow(dead_code)]
     pub fn set_mode(&mut self, mode: DisplayMode) {
         self.mode = mode;
     }
