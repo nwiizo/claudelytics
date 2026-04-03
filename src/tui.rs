@@ -11,19 +11,21 @@
 //! sorting, and export capabilities for Claude Code usage data.
 
 use crate::billing_blocks::BillingBlockManager;
+use crate::cache_analysis::{self, CacheAnalysis};
 use crate::claude_sessions::ClaudeSessionParser;
 use crate::conversation_display::{ConversationDisplay, DisplayMode};
 use crate::conversation_parser::{Conversation, ConversationParser, MessageContentBlock};
 use crate::models::{
-    ClaudeMessage, ClaudeSession, Command, CommandAction, ContentPart, DailyReport, MessageContent,
-    SessionReport, TokenUsage,
+    ClaudeMessage, ClaudeSession, Command, CommandAction, DailyReport, SessionReport, TokenUsage,
+    WeeklyReport,
 };
 use crate::pricing_cache::PricingCache;
+use crate::reports::generate_weekly_report_sorted;
 use crate::tui_visuals::{
     AnimationStyle, ProgressColorScheme, SmoothProgressBar, ToastNotification, VisualEffectsManager,
 };
 use anyhow::Result;
-use chrono::{Local, Utc};
+use chrono::{NaiveDate, Weekday};
 use copypasta::{ClipboardContext, ClipboardProvider};
 use crossterm::{
     event::{
@@ -45,16 +47,17 @@ use ratatui::{
     },
 };
 use std::io;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tab {
     Overview,
     Daily,
+    Weekly,
     Sessions,
     Conversations,
-    Charts,
+    Cache,
     BillingBlocks,
-    Resume,
     Help,
 }
 
@@ -84,15 +87,6 @@ enum TimeFilter {
     Today,
     LastWeek,
     LastMonth,
-}
-
-#[derive(Debug, Clone)]
-struct ResumeSession {
-    number: usize,
-    modified: String,
-    messages: String,
-    summary: String,
-    session_data: Option<ClaudeSession>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,14 +132,6 @@ pub struct TuiApp {
     // Enhanced features
     bookmarked_sessions: Vec<String>,
     comparison_sessions: Vec<String>,
-    // Resume functionality
-    resume_sessions: Vec<ResumeSession>,
-    resume_table_state: TableState,
-    resume_loading: bool,
-    // Resume input buffer
-    resume_input_mode: bool,
-    resume_input_buffer: String,
-    resume_input_cursor: usize,
     // Billing blocks
     billing_manager: BillingBlockManager,
     billing_blocks_table_state: TableState,
@@ -175,6 +161,12 @@ pub struct TuiApp {
     show_tool_usage: bool,
     // Export dialog state
     previous_mode: Option<AppMode>,
+    // Weekly report (computed lazily)
+    weekly_report: Option<WeeklyReport>,
+    weekly_table_state: TableState,
+    // Cache analysis (computed lazily)
+    cache_analysis: Option<CacheAnalysis>,
+    cache_table_state: TableState,
 }
 
 #[derive(Debug, Clone)]
@@ -258,12 +250,6 @@ impl TuiApp {
             filtered_commands: available_commands,
             bookmarked_sessions: Vec::new(),
             comparison_sessions: Vec::new(),
-            resume_sessions: Vec::new(),
-            resume_table_state: TableState::default(),
-            resume_loading: false,
-            resume_input_mode: false,
-            resume_input_buffer: String::new(),
-            resume_input_cursor: 0,
             billing_manager,
             billing_blocks_table_state: TableState::default(),
             billing_blocks_scroll_state,
@@ -289,6 +275,10 @@ impl TuiApp {
             show_thinking_blocks: false,
             show_tool_usage: true,
             previous_mode: None,
+            weekly_report: None,
+            weekly_table_state: TableState::default(),
+            cache_analysis: None,
+            cache_table_state: TableState::default(),
         };
 
         // Apply initial filters and sorting
@@ -335,11 +325,11 @@ impl TuiApp {
         self.current_tab = match tab_index {
             0 => Tab::Overview,
             1 => Tab::Daily,
-            2 => Tab::Sessions,
-            3 => Tab::Conversations,
-            4 => Tab::Charts,
-            5 => Tab::BillingBlocks,
-            6 => Tab::Resume,
+            2 => Tab::Weekly,
+            3 => Tab::Sessions,
+            4 => Tab::Conversations,
+            5 => Tab::Cache,
+            6 => Tab::BillingBlocks,
             7 => Tab::Help,
             _ => Tab::Overview,
         };
@@ -378,134 +368,6 @@ impl TuiApp {
         self.status_message = Some("✨ Previous session state restored".to_string());
     }
 
-    fn load_resume_sessions(&mut self) {
-        self.resume_loading = true;
-        match self.fetch_claude_sessions() {
-            Ok(sessions) => {
-                self.resume_sessions = sessions;
-                if !self.resume_sessions.is_empty() {
-                    self.resume_table_state.select(Some(0));
-                }
-                self.status_message = Some(format!(
-                    "📋 Loaded {} sessions with summaries linked to usage data",
-                    self.resume_sessions.len()
-                ));
-            }
-            Err(e) => {
-                self.status_message = Some(format!("❌ Failed to load sessions: {}", e));
-            }
-        }
-        self.resume_loading = false;
-        // Clear any loading animations
-        self.visual_effects.loading_animations.clear();
-    }
-
-    fn fetch_claude_sessions(&self) -> Result<Vec<ResumeSession>> {
-        // Load actual Claude sessions
-        let parser = ClaudeSessionParser::new(None);
-
-        match parser.get_recent_sessions(20) {
-            Ok(sessions) => {
-                let resume_sessions = sessions
-                    .into_iter()
-                    .enumerate()
-                    .map(|(idx, session)| {
-                        let time_diff = Local::now().signed_duration_since(session.modified_at);
-                        let modified = if time_diff.num_hours() < 1 {
-                            format!("{} min ago", time_diff.num_minutes())
-                        } else if time_diff.num_hours() < 24 {
-                            format!("{} hr ago", time_diff.num_hours())
-                        } else {
-                            format!("{} days ago", time_diff.num_days())
-                        };
-
-                        ResumeSession {
-                            number: idx + 1,
-                            modified,
-                            messages: session.message_count.to_string(),
-                            summary: session.summary.clone(),
-                            session_data: Some(session),
-                        }
-                    })
-                    .collect();
-                Ok(resume_sessions)
-            }
-            Err(_) => {
-                // Fallback to mock data if real sessions fail to load
-                Ok(self.get_mock_sessions())
-            }
-        }
-    }
-
-    fn get_mock_sessions(&self) -> Vec<ResumeSession> {
-        vec![
-            ResumeSession {
-                number: 1,
-                modified: "3 days ago".to_string(),
-                messages: "5".to_string(),
-                summary: "Advanced Rust TUI Analytics Implementation".to_string(),
-                session_data: None,
-            },
-            ResumeSession {
-                number: 2,
-                modified: "3 days ago".to_string(),
-                messages: "141".to_string(),
-                summary: "Rust CLI Help Docs & Release Workflow Optimization".to_string(),
-                session_data: None,
-            },
-            ResumeSession {
-                number: 3,
-                modified: "4 days ago".to_string(),
-                messages: "37".to_string(),
-                summary: "Claudelytics: Advanced Analytics TUI Development".to_string(),
-                session_data: None,
-            },
-            ResumeSession {
-                number: 4,
-                modified: "4 days ago".to_string(),
-                messages: "93".to_string(),
-                summary: "Claude's Advanced TUI Analytics Development".to_string(),
-                session_data: None,
-            },
-            ResumeSession {
-                number: 5,
-                modified: "4 days ago".to_string(),
-                messages: "10".to_string(),
-                summary: "Rust CLI Tool Evolution: Claude AI Usage Analytics".to_string(),
-                session_data: None,
-            },
-        ]
-    }
-
-    fn open_selected_session(&mut self) {
-        if let Some(selected) = self.resume_table_state.selected()
-            && let Some(session) = self.resume_sessions.get(selected)
-        {
-            match self.open_claude_session(session.number) {
-                Ok(_) => {
-                    self.status_message = Some(format!(
-                        "🚀 Opening session {}: {}",
-                        session.number, session.summary
-                    ));
-                    // Exit TUI since we're opening Claude
-                    self.should_quit = true;
-                }
-                Err(e) => {
-                    self.status_message = Some(format!("❌ Failed to open session: {}", e));
-                }
-            }
-        }
-    }
-
-    fn open_claude_session(&self, session_number: usize) -> Result<()> {
-        // Show message instead of actually opening to prevent hanging
-        anyhow::bail!(
-            "Opening Claude session {} is disabled to prevent hanging. Use 'claude --resume {}' in terminal instead.",
-            session_number,
-            session_number
-        )
-    }
-
     fn create_available_commands() -> Vec<Command> {
         vec![
             Command {
@@ -537,22 +399,15 @@ impl TuiApp {
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Charts".to_string(),
-                description: "Go to charts tab".to_string(),
-                shortcut: Some("5".to_string()),
-                action: CommandAction::SwitchTab(4),
-                category: "Navigation".to_string(),
-            },
-            Command {
-                name: "Switch to Billing".to_string(),
-                description: "Go to billing blocks tab".to_string(),
+                name: "Switch to Cache".to_string(),
+                description: "Go to cache analysis tab".to_string(),
                 shortcut: Some("6".to_string()),
                 action: CommandAction::SwitchTab(5),
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Resume".to_string(),
-                description: "Go to resume tab".to_string(),
+                name: "Switch to Billing".to_string(),
+                description: "Go to billing blocks tab".to_string(),
                 shortcut: Some("7".to_string()),
                 action: CommandAction::SwitchTab(6),
                 category: "Navigation".to_string(),
@@ -560,7 +415,7 @@ impl TuiApp {
             Command {
                 name: "Switch to Help".to_string(),
                 description: "Go to help tab".to_string(),
-                shortcut: Some("8".to_string()),
+                shortcut: Some("h".to_string()),
                 action: CommandAction::SwitchTab(7),
                 category: "Navigation".to_string(),
             },
@@ -634,36 +489,31 @@ impl TuiApp {
                                 self.visual_effects.add_key_effect(key_str, effect_pos);
                             }
 
-                            // Check if we're in resume input mode first
-                            if self.resume_input_mode {
-                                self.handle_resume_input(key.code)?;
-                            } else {
-                                match self.current_mode {
-                                    AppMode::CommandPalette => {
-                                        self.handle_command_palette_input(key.code, key.modifiers)?;
+                            match self.current_mode {
+                                AppMode::CommandPalette => {
+                                    self.handle_command_palette_input(key.code, key.modifiers)?;
+                                }
+                                AppMode::Search => {
+                                    self.handle_search_input(key.code)?;
+                                }
+                                AppMode::Visual => {
+                                    self.handle_visual_mode_input(key.code)?;
+                                }
+                                AppMode::ExportDialog => {
+                                    self.handle_export_dialog_input(key.code)?;
+                                }
+                                AppMode::ConversationView => {
+                                    if self.conversation_search_mode {
+                                        self.handle_conversation_search_input(key.code)?;
+                                    } else {
+                                        self.handle_conversation_view_input(key.code)?;
                                     }
-                                    AppMode::Search => {
+                                }
+                                AppMode::Normal => {
+                                    if self.search_mode {
                                         self.handle_search_input(key.code)?;
-                                    }
-                                    AppMode::Visual => {
-                                        self.handle_visual_mode_input(key.code)?;
-                                    }
-                                    AppMode::ExportDialog => {
-                                        self.handle_export_dialog_input(key.code)?;
-                                    }
-                                    AppMode::ConversationView => {
-                                        if self.conversation_search_mode {
-                                            self.handle_conversation_search_input(key.code)?;
-                                        } else {
-                                            self.handle_conversation_view_input(key.code)?;
-                                        }
-                                    }
-                                    AppMode::Normal => {
-                                        if self.search_mode {
-                                            self.handle_search_input(key.code)?;
-                                        } else {
-                                            self.handle_normal_input(key.code, key.modifiers)?;
-                                        }
+                                    } else {
+                                        self.handle_normal_input(key.code, key.modifiers)?;
                                     }
                                 }
                             }
@@ -724,37 +574,36 @@ impl TuiApp {
                 ));
             }
             KeyCode::Char('3') => {
+                self.current_tab = Tab::Weekly;
+                self.visual_effects.add_toast(ToastNotification::info(
+                    "Switched to Weekly View".to_string(),
+                ));
+            }
+            KeyCode::Char('4') => {
                 self.current_tab = Tab::Sessions;
                 self.visual_effects
                     .add_toast(ToastNotification::info("Switched to Sessions".to_string()));
             }
-            KeyCode::Char('4') => {
+            KeyCode::Char('5') => {
                 self.current_tab = Tab::Conversations;
                 self.visual_effects.add_toast(ToastNotification::info(
                     "Switched to Conversations".to_string(),
                 ));
                 self.load_conversation_sessions();
             }
-            KeyCode::Char('5') => {
-                self.current_tab = Tab::Charts;
-                self.visual_effects
-                    .add_toast(ToastNotification::info("Switched to Charts".to_string()));
-            }
             KeyCode::Char('6') => {
+                self.current_tab = Tab::Cache;
+                self.visual_effects.add_toast(ToastNotification::info(
+                    "Switched to Cache Analysis".to_string(),
+                ));
+            }
+            KeyCode::Char('7') => {
                 self.current_tab = Tab::BillingBlocks;
                 self.visual_effects.add_toast(ToastNotification::info(
                     "Switched to Billing Blocks".to_string(),
                 ));
             }
-            KeyCode::Char('7') => {
-                self.current_tab = Tab::Resume;
-                self.visual_effects.add_toast(ToastNotification::info(
-                    "Switched to Resume Tab".to_string(),
-                ));
-                // Auto-load removed to prevent hanging
-                // Users can press 'r' to manually load sessions
-            }
-            KeyCode::Char('8') | KeyCode::Char('h') => {
+            KeyCode::Char('h') => {
                 self.current_tab = Tab::Help;
                 self.visual_effects
                     .add_toast(ToastNotification::info("Showing Help".to_string()));
@@ -882,43 +731,8 @@ impl TuiApp {
             KeyCode::Char('?') => {
                 self.show_help_popup = !self.show_help_popup;
             }
-            KeyCode::Char('i') => {
-                if self.current_tab == Tab::Resume {
-                    if let Some(selected) = self.resume_table_state.selected() {
-                        if let Some(resume_session) = self.resume_sessions.get(selected) {
-                            if resume_session.session_data.is_some() {
-                                self.resume_input_mode = true;
-                                self.current_mode = AppMode::Normal; // Ensure we're in normal mode
-                                self.resume_input_buffer.clear();
-                                self.resume_input_cursor = 0;
-                                self.status_message = Some(format!(
-                                    "💬 Entering message input mode for session: '{}'\n📝 Type your message and press Enter to send, Esc to cancel",
-                                    if let Some(ref session) = resume_session.session_data {
-                                        if session.summary.is_empty() {
-                                            "Untitled"
-                                        } else {
-                                            &session.summary
-                                        }
-                                    } else {
-                                        "Unknown"
-                                    }
-                                ));
-                            } else {
-                                self.status_message = Some("⚠️ Cannot send messages to demo sessions. Select a real session.".to_string());
-                            }
-                        }
-                    } else {
-                        self.status_message =
-                            Some("⚠️ Please select a session first (use ↑/↓ arrows)".to_string());
-                    }
-                }
-            }
             KeyCode::Enter => {
-                if self.current_tab == Tab::Resume {
-                    self.open_selected_session();
-                } else {
-                    self.handle_enter();
-                }
+                self.handle_enter();
             }
             _ => {}
         }
@@ -1067,9 +881,10 @@ impl TuiApp {
     fn get_current_selected_index(&self) -> Option<usize> {
         match self.current_tab {
             Tab::Daily => self.daily_table_state.selected(),
+            Tab::Weekly => self.weekly_table_state.selected(),
             Tab::Sessions => self.session_table_state.selected(),
             Tab::BillingBlocks => self.billing_blocks_table_state.selected(),
-            Tab::Resume => self.resume_table_state.selected(),
+            Tab::Cache => self.cache_table_state.selected(),
             _ => None,
         }
     }
@@ -1106,24 +921,14 @@ impl TuiApp {
     }
 
     fn refresh_data(&mut self) -> Result<()> {
-        if self.current_tab == Tab::Resume {
-            // Refresh Claude sessions (manual load only)
-            self.visual_effects.add_loading(
-                "Loading Claude sessions...".to_string(),
-                AnimationStyle::Dots,
-            );
-            self.load_resume_sessions();
-            self.visual_effects.loading_animations.clear();
-        } else {
-            // In a real implementation, you'd re-parse the data
-            // For now, we'll just show a message
-            self.status_message = Some("🔄 Data refreshed successfully!".to_string());
+        // In a real implementation, you'd re-parse the data
+        // For now, we'll just show a message
+        self.status_message = Some("🔄 Data refreshed successfully!".to_string());
 
-            // Reset to original data to simulate refresh
-            self.daily_report = self.original_daily_report.clone();
-            self.session_report = self.original_session_report.clone();
-            self.apply_filters();
-        }
+        // Reset to original data to simulate refresh
+        self.daily_report = self.original_daily_report.clone();
+        self.session_report = self.original_session_report.clone();
+        self.apply_filters();
         Ok(())
     }
 
@@ -1184,7 +989,7 @@ impl TuiApp {
             });
         }
 
-        // Simple sorting
+        // Sort both daily and sessions
         match self.sort_mode {
             SortMode::Date => {
                 self.daily_report.daily.sort_by(|a, b| b.date.cmp(&a.date));
@@ -1193,17 +998,56 @@ impl TuiApp {
                     .sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
             }
             SortMode::Cost => {
+                self.daily_report.daily.sort_by(|a, b| {
+                    b.total_cost
+                        .partial_cmp(&a.total_cost)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 self.session_report.sessions.sort_by(|a, b| {
                     b.total_cost
                         .partial_cmp(&a.total_cost)
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
-            _ => {
-                // Default to date sorting for other modes to prevent complexity
+            SortMode::Tokens => {
+                self.daily_report
+                    .daily
+                    .sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
                 self.session_report
                     .sessions
-                    .sort_by(|a, b| b.last_activity.cmp(&a.last_activity));
+                    .sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+            }
+            SortMode::Efficiency => {
+                // Sort by cache hit rate (cache_read / total input)
+                let cache_rate = |cr: u64, cc: u64, inp: u64| -> f64 {
+                    let denom = cr + cc + inp;
+                    if denom == 0 {
+                        0.0
+                    } else {
+                        cr as f64 / denom as f64
+                    }
+                };
+                self.daily_report.daily.sort_by(|a, b| {
+                    let ra =
+                        cache_rate(a.cache_read_tokens, a.cache_creation_tokens, a.input_tokens);
+                    let rb =
+                        cache_rate(b.cache_read_tokens, b.cache_creation_tokens, b.input_tokens);
+                    rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                self.session_report.sessions.sort_by(|a, b| {
+                    let ra =
+                        cache_rate(a.cache_read_tokens, a.cache_creation_tokens, a.input_tokens);
+                    let rb =
+                        cache_rate(b.cache_read_tokens, b.cache_creation_tokens, b.input_tokens);
+                    rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+            SortMode::Project => {
+                self.session_report
+                    .sessions
+                    .sort_by(|a, b| a.project_path.cmp(&b.project_path));
+                // Daily has no project, fall back to date
+                self.daily_report.daily.sort_by(|a, b| b.date.cmp(&a.date));
             }
         }
 
@@ -1288,6 +1132,7 @@ impl TuiApp {
 
         let data_type = match self.current_tab {
             Tab::Daily => "daily",
+            Tab::Weekly => "weekly",
             Tab::Sessions => "sessions",
             Tab::BillingBlocks => "billing",
             Tab::Overview => "summary",
@@ -1682,10 +1527,12 @@ impl TuiApp {
                 self.current_tab = match index {
                     0 => Tab::Overview,
                     1 => Tab::Daily,
-                    2 => Tab::Sessions,
-                    3 => Tab::Charts,
-                    4 => Tab::Resume,
-                    5 => Tab::Help,
+                    2 => Tab::Weekly,
+                    3 => Tab::Sessions,
+                    4 => Tab::Conversations,
+                    5 => Tab::Cache,
+                    6 => Tab::BillingBlocks,
+                    7 => Tab::Help,
                     _ => Tab::Overview,
                 };
                 self.status_message = Some(format!("Switched to tab {}", index + 1));
@@ -1702,177 +1549,6 @@ impl TuiApp {
             }
         }
         Ok(())
-    }
-
-    fn handle_resume_input(&mut self, key: KeyCode) -> Result<()> {
-        match key {
-            KeyCode::Esc => {
-                self.resume_input_mode = false;
-                self.current_mode = AppMode::Normal;
-                let discarded = !self.resume_input_buffer.is_empty();
-                self.resume_input_buffer.clear();
-                self.resume_input_cursor = 0;
-                if discarded {
-                    self.status_message = Some("❌ Message input cancelled".to_string());
-                } else {
-                    self.status_message = Some("👍 Exited input mode".to_string());
-                }
-            }
-            KeyCode::Enter => {
-                if !self.resume_input_buffer.is_empty() {
-                    self.status_message = Some("📤 Sending message...".to_string());
-                    self.send_resume_message()?;
-                } else {
-                    self.status_message = Some("⚠️ Cannot send empty message".to_string());
-                }
-                self.resume_input_mode = false;
-                self.current_mode = AppMode::Normal;
-                self.resume_input_buffer.clear();
-                self.resume_input_cursor = 0;
-            }
-            KeyCode::Backspace => {
-                if self.resume_input_cursor > 0 {
-                    self.resume_input_buffer
-                        .remove(self.resume_input_cursor - 1);
-                    self.resume_input_cursor -= 1;
-                }
-            }
-            KeyCode::Left => {
-                if self.resume_input_cursor > 0 {
-                    self.resume_input_cursor -= 1;
-                }
-            }
-            KeyCode::Right => {
-                if self.resume_input_cursor < self.resume_input_buffer.len() {
-                    self.resume_input_cursor += 1;
-                }
-            }
-            KeyCode::Home => {
-                self.resume_input_cursor = 0;
-            }
-            KeyCode::End => {
-                self.resume_input_cursor = self.resume_input_buffer.len();
-            }
-            KeyCode::Char(c) => {
-                self.resume_input_buffer.insert(self.resume_input_cursor, c);
-                self.resume_input_cursor += 1;
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn send_resume_message(&mut self) -> Result<()> {
-        if let Some(selected) = self.resume_table_state.selected() {
-            // Clone the input buffer to avoid borrowing issues
-            let message_content = self.resume_input_buffer.clone();
-
-            // Get session data for the operation
-            let (session_path, session_id, summary) =
-                if let Some(resume_session) = self.resume_sessions.get(selected) {
-                    if let Some(session_data) = &resume_session.session_data {
-                        (
-                            session_data.file_path.clone(),
-                            session_data.session_id.clone(),
-                            session_data.summary.clone(),
-                        )
-                    } else {
-                        self.status_message =
-                            Some("❌ Cannot send message to demo session".to_string());
-                        return Ok(());
-                    }
-                } else {
-                    return Ok(());
-                };
-
-            // Create a temporary session object for the append operation
-            let temp_session = ClaudeSession {
-                file_path: session_path,
-                project_path: String::new(),
-                session_id,
-                summary: summary.clone(),
-                created_at: Utc::now(),
-                modified_at: Utc::now(),
-                message_count: 0,
-                usage: TokenUsage::default(),
-            };
-
-            // Append the message
-            match self.append_message_to_session(&temp_session, &message_content) {
-                Ok(new_message_count) => {
-                    // Update the session data
-                    if let Some(resume_session) = self.resume_sessions.get_mut(selected) {
-                        resume_session.messages = new_message_count.to_string();
-                    }
-
-                    // Update the UI with success message
-                    self.status_message = Some(format!(
-                        "✅ Message added to session: '{}'\n📝 Message: \"{}\"",
-                        if summary.is_empty() {
-                            "Untitled"
-                        } else {
-                            &summary
-                        },
-                        message_content
-                    ));
-
-                    // Reload sessions to reflect changes
-                    self.load_resume_sessions();
-                }
-                Err(e) => {
-                    self.status_message = Some(format!("❌ Failed to add message: {}", e));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn append_message_to_session(&self, session: &ClaudeSession, message: &str) -> Result<usize> {
-        use chrono::Utc;
-        use std::fs::{File, OpenOptions};
-        use std::io::{BufRead, BufReader, Write};
-        use uuid::Uuid;
-
-        // Read existing session data
-        let file = File::open(&session.file_path)?;
-        let reader = BufReader::new(file);
-        let mut lines: Vec<String> = reader.lines().collect::<Result<_, _>>()?;
-
-        // Create new message
-        let new_message = ClaudeMessage {
-            message_type: "claude_message".to_string(),
-            timestamp: Utc::now(),
-            message: MessageContent {
-                role: "user".to_string(),
-                content: vec![ContentPart {
-                    content_type: "text".to_string(),
-                    text: Some(message.to_string()),
-                }],
-                usage: None,
-            },
-            uuid: Uuid::new_v4().to_string(),
-            parent_uuid: None,
-            session_id: session.session_id.clone(),
-        };
-
-        // Serialize the new message
-        let message_json = serde_json::to_string(&new_message)?;
-
-        // Append the new message to the lines
-        lines.push(message_json);
-
-        // Write back to file
-        let mut file = OpenOptions::new()
-            .write(true)
-            .truncate(true)
-            .open(&session.file_path)?;
-
-        for line in &lines {
-            writeln!(file, "{}", line)?;
-        }
-
-        // Return the new message count (excluding the summary line)
-        Ok(lines.len() - 1)
     }
 
     fn filter_commands(&mut self) {
@@ -2486,15 +2162,25 @@ impl TuiApp {
 
         self.visual_effects.status_bar.items_count = match self.current_tab {
             Tab::Daily => self.daily_report.daily.len(),
+            Tab::Weekly => self
+                .weekly_report
+                .as_ref()
+                .map(|r| r.weekly.len())
+                .unwrap_or(0),
             Tab::Sessions => self.session_report.sessions.len(),
-            Tab::Resume => self.resume_sessions.len(),
+            Tab::Cache => self
+                .cache_analysis
+                .as_ref()
+                .map(|a| a.sessions.len())
+                .unwrap_or(0),
             _ => 0,
         };
 
         self.visual_effects.status_bar.selected_index = match self.current_tab {
             Tab::Daily => self.daily_table_state.selected(),
+            Tab::Weekly => self.weekly_table_state.selected(),
             Tab::Sessions => self.session_table_state.selected(),
-            Tab::Resume => self.resume_table_state.selected(),
+            Tab::Cache => self.cache_table_state.selected(),
             _ => None,
         };
 
@@ -2542,11 +2228,11 @@ impl TuiApp {
         let tab_titles = vec![
             "📊 Overview",
             "📅 Daily",
+            "📆 Weekly",
             "📋 Sessions",
             "💬 Conversations",
-            "📈 Charts",
+            "🔄 Cache",
             "⏰ Billing",
-            "🔄 Resume",
             "❓ Help",
         ];
         let tabs = Tabs::new(tab_titles)
@@ -2568,11 +2254,11 @@ impl TuiApp {
         match self.current_tab {
             Tab::Overview => self.render_overview(f, main_area),
             Tab::Daily => self.render_daily(f, main_area),
+            Tab::Weekly => self.render_weekly(f, main_area),
             Tab::Sessions => self.render_sessions(f, main_area),
             Tab::Conversations => self.render_conversations(f, main_area),
-            Tab::Charts => self.render_charts(f, main_area),
+            Tab::Cache => self.render_cache(f, main_area),
             Tab::BillingBlocks => self.render_billing_blocks(f, main_area),
-            Tab::Resume => self.render_resume(f, main_area),
             Tab::Help => self.render_help(f, main_area),
         }
 
@@ -2968,15 +2654,170 @@ impl TuiApp {
         f.render_stateful_widget(table, chunks[1], &mut self.daily_table_state);
     }
 
-    fn try_find_conversation_summary(&self, session_id: &str) -> Option<String> {
-        // Try to match session with conversation summary
-        // This could be enhanced to actually parse Claude conversation data
-        for resume_session in &self.resume_sessions {
-            if session_id.contains(&resume_session.number.to_string()) {
-                return Some(resume_session.summary.clone());
+    fn try_find_conversation_summary(&self, _session_id: &str) -> Option<String> {
+        // Could be enhanced to actually parse Claude conversation data
+        None
+    }
+
+    fn ensure_weekly_report(&mut self) {
+        if self.weekly_report.is_some() {
+            return;
+        }
+        // Reconstruct DailyUsageMap from original_daily_report
+        let mut daily_map = std::collections::HashMap::new();
+        for day in &self.original_daily_report.daily {
+            if let Ok(date) = NaiveDate::parse_from_str(&day.date, "%Y-%m-%d") {
+                let usage = TokenUsage {
+                    input_tokens: day.input_tokens,
+                    output_tokens: day.output_tokens,
+                    cache_creation_tokens: day.cache_creation_tokens,
+                    cache_read_tokens: day.cache_read_tokens,
+                    total_cost: day.total_cost,
+                    fast_mode_cost: 0.0,
+                };
+                daily_map.insert(date, usage);
             }
         }
-        None
+        let report = generate_weekly_report_sorted(daily_map, None, None, Weekday::Mon);
+        if !report.weekly.is_empty() {
+            self.weekly_table_state.select(Some(0));
+        }
+        self.weekly_report = Some(report);
+    }
+
+    fn render_weekly(&mut self, f: &mut Frame, area: Rect) {
+        self.ensure_weekly_report();
+
+        let report = match &self.weekly_report {
+            Some(r) => r,
+            None => {
+                let msg = Paragraph::new("No weekly data available").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Weekly Report"),
+                );
+                f.render_widget(msg, area);
+                return;
+            }
+        };
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .split(area);
+
+        // Header
+        let header_cells = [
+            "Week",
+            "Days",
+            "Input",
+            "Output",
+            "Total Tokens",
+            "Cost",
+            "Avg/Day",
+        ]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+        let header = Row::new(header_cells).height(1);
+
+        let rows: Vec<Row> = report
+            .weekly
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let style = if i % 2 == 0 {
+                    Style::default()
+                } else {
+                    Style::default().bg(Color::Rgb(30, 30, 30))
+                };
+
+                let cost_color = if w.total_cost > 5.0 {
+                    Color::Red
+                } else if w.total_cost > 2.0 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                };
+
+                let week_range = format!("{} ~ {}", w.week_start, w.week_end);
+
+                Row::new(vec![
+                    Cell::from(week_range).style(style),
+                    Cell::from(format!("{}", w.days_active)).style(style),
+                    Cell::from(self.format_number(w.input_tokens))
+                        .style(Style::default().fg(Color::Blue)),
+                    Cell::from(self.format_number(w.output_tokens))
+                        .style(Style::default().fg(Color::Cyan)),
+                    Cell::from(self.format_number(w.total_tokens))
+                        .style(Style::default().fg(Color::Magenta)),
+                    Cell::from(format!("${:.2}", w.total_cost))
+                        .style(Style::default().fg(cost_color)),
+                    Cell::from(format!("${:.2}", w.avg_daily_cost))
+                        .style(Style::default().fg(Color::White)),
+                ])
+            })
+            .collect();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(25),
+                Constraint::Length(6),
+                Constraint::Length(12),
+                Constraint::Length(12),
+                Constraint::Length(14),
+                Constraint::Length(10),
+                Constraint::Length(10),
+            ],
+        )
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Weekly Report ({} weeks)", report.weekly.len())),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        f.render_stateful_widget(table, chunks[0], &mut self.weekly_table_state);
+
+        // Totals bar
+        let totals = &report.totals;
+        let total_info = Paragraph::new(Line::from(vec![
+            Span::styled("Totals: ", Style::default().fg(Color::Yellow)),
+            Span::styled(
+                format!("${:.2}", totals.total_cost),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(" | "),
+            Span::styled(
+                format!("Tokens: {}", self.format_number(totals.total_tokens)),
+                Style::default().fg(Color::Magenta),
+            ),
+            Span::raw(" | "),
+            Span::styled(
+                format!("In: {}", self.format_number(totals.input_tokens)),
+                Style::default().fg(Color::Blue),
+            ),
+            Span::raw(" | "),
+            Span::styled(
+                format!("Out: {}", self.format_number(totals.output_tokens)),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]))
+        .block(Block::default().borders(Borders::ALL));
+        f.render_widget(total_info, chunks[1]);
     }
 
     fn render_sessions(&mut self, f: &mut Frame, area: Rect) {
@@ -3481,225 +3322,6 @@ impl TuiApp {
         }
     }
 
-    fn render_charts(&self, f: &mut Frame, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(12), // Cost trend chart
-                Constraint::Length(12), // Token usage chart
-                Constraint::Min(0),     // Usage distribution
-            ])
-            .margin(1)
-            .split(area);
-
-        // Simple ASCII cost trend chart
-        let cost_chart_lines = self.create_cost_trend_chart();
-        let cost_chart = Paragraph::new(cost_chart_lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("📈 Cost Trend (Last 14 Days)")
-                    .border_style(Style::default().fg(Color::Green)),
-            )
-            .wrap(Wrap { trim: true });
-        f.render_widget(cost_chart, chunks[0]);
-
-        // Token usage chart
-        let token_chart_lines = self.create_token_usage_chart();
-        let token_chart = Paragraph::new(token_chart_lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("🎯 Token Usage Distribution")
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: true });
-        f.render_widget(token_chart, chunks[1]);
-
-        // Usage statistics
-        let stats_lines = self.create_usage_stats();
-        let stats = Paragraph::new(stats_lines)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("📊 Usage Statistics")
-                    .border_style(Style::default().fg(Color::Cyan)),
-            )
-            .wrap(Wrap { trim: true });
-        f.render_widget(stats, chunks[2]);
-    }
-
-    fn create_cost_trend_chart(&self) -> Vec<Line<'_>> {
-        let mut lines = vec![];
-
-        // Take last 14 days and create a simple bar chart
-        let recent_days: Vec<_> = self.daily_report.daily.iter().take(14).collect();
-
-        if recent_days.is_empty() {
-            lines.push(Line::from("No data available"));
-            return lines;
-        }
-
-        let max_cost = recent_days
-            .iter()
-            .map(|day| day.total_cost)
-            .fold(0.0, f64::max);
-
-        if max_cost == 0.0 {
-            lines.push(Line::from("No cost data"));
-            return lines;
-        }
-
-        for day in recent_days.iter() {
-            let bar_length = ((day.total_cost / max_cost) * 40.0) as usize;
-            let bar = "█".repeat(bar_length);
-            let line = Line::from(vec![
-                Span::styled(format!("{} ", day.date), Style::default().fg(Color::White)),
-                Span::styled(bar, Style::default().fg(Color::Green)),
-                Span::styled(
-                    format!(" ${:.2}", day.total_cost),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]);
-            lines.push(line);
-        }
-
-        lines
-    }
-
-    fn create_token_usage_chart(&self) -> Vec<Line<'_>> {
-        let mut lines = vec![];
-
-        let total = self.daily_report.totals.total_tokens as f64;
-        if total == 0.0 {
-            lines.push(Line::from("No token data available"));
-            return lines;
-        }
-
-        let input_pct = (self.daily_report.totals.input_tokens as f64 / total * 100.0) as usize;
-        let output_pct = (self.daily_report.totals.output_tokens as f64 / total * 100.0) as usize;
-        let cache_pct = ((self.daily_report.totals.cache_creation_tokens
-            + self.daily_report.totals.cache_read_tokens) as f64
-            / total
-            * 100.0) as usize;
-
-        lines.push(Line::from(vec![
-            Span::styled("Input Tokens:   ", Style::default().fg(Color::White)),
-            Span::styled(
-                "█".repeat(input_pct.min(50)),
-                Style::default().fg(Color::Blue),
-            ),
-            Span::styled(format!(" {}%", input_pct), Style::default().fg(Color::Blue)),
-        ]));
-
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(vec![
-            Span::styled("Output Tokens:  ", Style::default().fg(Color::White)),
-            Span::styled(
-                "█".repeat(output_pct.min(50)),
-                Style::default().fg(Color::Cyan),
-            ),
-            Span::styled(
-                format!(" {}%", output_pct),
-                Style::default().fg(Color::Cyan),
-            ),
-        ]));
-
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(vec![
-            Span::styled("Cache Tokens:   ", Style::default().fg(Color::White)),
-            Span::styled(
-                "█".repeat(cache_pct.min(50)),
-                Style::default().fg(Color::Yellow),
-            ),
-            Span::styled(
-                format!(" {}%", cache_pct),
-                Style::default().fg(Color::Yellow),
-            ),
-        ]));
-
-        lines
-    }
-
-    fn create_usage_stats(&self) -> Vec<Line<'_>> {
-        let mut lines = vec![];
-
-        // Calculate some interesting statistics
-        let total_sessions = self.session_report.sessions.len();
-        let avg_session_cost = if total_sessions > 0 {
-            self.session_report
-                .sessions
-                .iter()
-                .map(|s| s.total_cost)
-                .sum::<f64>()
-                / total_sessions as f64
-        } else {
-            0.0
-        };
-
-        let max_daily_cost = self
-            .daily_report
-            .daily
-            .iter()
-            .map(|day| day.total_cost)
-            .fold(0.0, f64::max);
-
-        let max_session_cost = self
-            .session_report
-            .sessions
-            .iter()
-            .map(|session| session.total_cost)
-            .fold(0.0, f64::max);
-
-        lines.push(Line::from(vec![
-            Span::styled("📊 Total Sessions: ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("{}", total_sessions),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(vec![
-            Span::styled("💰 Avg Session Cost: ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("${:.2}", avg_session_cost),
-                Style::default()
-                    .fg(Color::Green)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(vec![
-            Span::styled("🔥 Max Daily Cost: ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("${:.2}", max_daily_cost),
-                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        lines.push(Line::from(""));
-
-        lines.push(Line::from(vec![
-            Span::styled("🚀 Max Session Cost: ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("${:.2}", max_session_cost),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]));
-
-        lines
-    }
-
     fn render_help(&self, f: &mut Frame, area: Rect) {
         let help_text = vec![
             Line::from(""),
@@ -3723,7 +3345,7 @@ impl TuiApp {
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(vec![
-                Span::styled("  1-5, Tab/Shift+Tab", Style::default().fg(Color::Green)),
+                Span::styled("  1-7/h, Tab/Shift+Tab", Style::default().fg(Color::Green)),
                 Span::styled("  Switch between tabs", Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
@@ -3913,21 +3535,42 @@ impl TuiApp {
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  3. Sessions", Style::default().fg(Color::Green)),
+                Span::styled("  3. Weekly", Style::default().fg(Color::Green)),
+                Span::styled(
+                    "        Weekly usage aggregation",
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  4. Sessions", Style::default().fg(Color::Green)),
                 Span::styled(
                     "      Searchable session analytics",
                     Style::default().fg(Color::White),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  4. Charts", Style::default().fg(Color::Green)),
+                Span::styled("  5. Conversations", Style::default().fg(Color::Green)),
                 Span::styled(
-                    "        ASCII charts and visualizations",
+                    " Full conversation viewer",
                     Style::default().fg(Color::White),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  5. Help", Style::default().fg(Color::Green)),
+                Span::styled("  6. Cache", Style::default().fg(Color::Green)),
+                Span::styled(
+                    "         Cache analysis view",
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  7. Billing", Style::default().fg(Color::Green)),
+                Span::styled(
+                    "       Billing blocks view",
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  h. Help", Style::default().fg(Color::Green)),
                 Span::styled(
                     "          This comprehensive help screen",
                     Style::default().fg(Color::White),
@@ -3950,10 +3593,6 @@ impl TuiApp {
             )]),
             Line::from(vec![Span::styled(
                 "  • Time-based filtering",
-                Style::default().fg(Color::White),
-            )]),
-            Line::from(vec![Span::styled(
-                "  • ASCII charts and trends",
                 Style::default().fg(Color::White),
             )]),
             Line::from(vec![Span::styled(
@@ -3986,196 +3625,277 @@ impl TuiApp {
         f.render_widget(help, area);
     }
 
-    fn render_resume(&mut self, f: &mut Frame, area: Rect) {
-        let chunks = if self.resume_input_mode {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Controls info
-                    Constraint::Min(10),   // Claude sessions table
-                    Constraint::Length(3), // Input area
-                ])
-                .margin(1)
-                .split(area)
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Controls info
-                    Constraint::Min(0),    // Claude sessions table
-                ])
-                .margin(1)
-                .split(area)
-        };
+    fn ensure_cache_analysis(&mut self) {
+        if self.cache_analysis.is_some() {
+            return;
+        }
+        // Discover claude directories
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+        let legacy = PathBuf::from(&home).join(".claude");
+        let xdg = PathBuf::from(&home).join(".config").join("claude");
 
-        // Controls and instructions
-        let controls_text = Line::from(vec![
-            Span::styled("Controls: ", Style::default().fg(Color::Cyan)),
-            Span::styled(
-                "↑/↓",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" Navigate | ", Style::default().fg(Color::White)),
-            Span::styled(
-                "Enter",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" Open Session | ", Style::default().fg(Color::White)),
-            Span::styled(
-                "i",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" Send Message | ", Style::default().fg(Color::White)),
-            Span::styled(
-                "r",
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" Refresh", Style::default().fg(Color::White)),
-        ]);
-
-        let controls = Paragraph::new(controls_text).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("🔄 Claude Resume Sessions")
-                .border_style(Style::default().fg(Color::Green)),
-        );
-        f.render_widget(controls, chunks[0]);
-
-        // Claude sessions table
-        if self.resume_loading {
-            // Show loading animation
-            let loading_area = Rect {
-                x: chunks[1].x + chunks[1].width / 2 - 15,
-                y: chunks[1].y + chunks[1].height / 2 - 1,
-                width: 30,
-                height: 3,
-            };
-
-            // Add a loading animation if not already present
-            if self.visual_effects.loading_animations.is_empty() {
-                self.visual_effects.add_loading(
-                    "Loading Claude sessions...".to_string(),
-                    AnimationStyle::Dots,
-                );
-            }
-
-            // Render the block first
-            let loading_block = Block::default()
-                .borders(Borders::ALL)
-                .title("📋 Sessions")
-                .border_style(Style::default().fg(Color::Blue));
-            f.render_widget(loading_block, chunks[1]);
-
-            // Render loading animation on top
-            if let Some(anim) = self.visual_effects.loading_animations.first() {
-                anim.render(f, loading_area);
-            }
-        } else if self.resume_sessions.is_empty() {
-            let empty_text = vec![
-                Line::from(""),
-                Line::from("No Claude sessions loaded"),
-                Line::from(""),
-                Line::from("Press 'r' to load Claude sessions (demo mode)"),
-                Line::from("Note: Real Claude integration temporarily disabled"),
-            ];
-            let empty_paragraph = Paragraph::new(empty_text)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("📋 Sessions")
-                        .border_style(Style::default().fg(Color::DarkGray)),
-                )
-                .style(Style::default().fg(Color::Gray));
-            f.render_widget(empty_paragraph, chunks[1]);
-        } else {
-            let header = Row::new(vec!["#", "Modified", "Messages", "Summary"])
-                .style(Style::default().fg(Color::Cyan))
-                .height(1);
-
-            let rows = self.resume_sessions.iter().map(|session| {
-                Row::new(vec![
-                    Cell::from(format!("{}.", session.number)),
-                    Cell::from(session.modified.clone()),
-                    Cell::from(session.messages.clone()),
-                    Cell::from(self.truncate_text(&session.summary, 60)),
-                ])
-                .height(1)
-            });
-
-            let table = Table::new(
-                rows,
-                [
-                    Constraint::Length(4),
-                    Constraint::Length(12),
-                    Constraint::Length(8),
-                    Constraint::Min(0),
-                ],
-            )
-            .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(format!(
-                        "📋 Claude Sessions ({})",
-                        self.resume_sessions.len()
-                    ))
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-            .highlight_symbol("► ");
-
-            f.render_stateful_widget(table, chunks[1], &mut self.resume_table_state);
+        let mut dirs = Vec::new();
+        if legacy.exists() {
+            dirs.push(legacy);
+        }
+        if xdg.exists() {
+            dirs.push(xdg);
         }
 
-        // Render input area if in input mode
-        if self.resume_input_mode && chunks.len() > 2 {
-            let char_count = self.resume_input_buffer.chars().count();
-            let title = format!("💬 Message Input [{} chars]", char_count);
+        // Try each directory until we get a result
+        for dir in &dirs {
+            if let Ok(analysis) = cache_analysis::analyze_cache(dir, None, None, None, 0.5) {
+                if !analysis.sessions.is_empty() {
+                    self.cache_table_state.select(Some(0));
+                }
+                self.cache_analysis = Some(analysis);
+                return;
+            }
+        }
 
-            let input_block = Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
+        // If no directory worked, store an empty analysis
+        self.cache_analysis = Some(CacheAnalysis {
+            sessions: Vec::new(),
+            total_cold_start: 0,
+            total_5m_miss: 0,
+            total_60m_miss: 0,
+            total_normal_churn: 0,
+            total_cache_writes: 0,
+            total_cache_reads: 0,
+            avg_warmup_turn: 0.0,
+            avg_breakeven_turn: 0.0,
+            project_aggregates: Vec::new(),
+        });
+    }
+
+    fn render_cache(&mut self, f: &mut Frame, area: Rect) {
+        self.ensure_cache_analysis();
+
+        let analysis = match &self.cache_analysis {
+            Some(a) => a,
+            None => {
+                let msg = Paragraph::new("No cache data available").block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Cache Analysis"),
                 );
+                f.render_widget(msg, area);
+                return;
+            }
+        };
 
-            let input_text = if self.resume_input_buffer.is_empty() {
-                Paragraph::new("Type your message here...")
-                    .style(
-                        Style::default()
-                            .fg(Color::DarkGray)
-                            .add_modifier(Modifier::ITALIC),
-                    )
-                    .block(input_block)
-            } else {
-                // Create the input display with cursor
-                let display_text = if self.resume_input_cursor == self.resume_input_buffer.len() {
-                    format!("{}█", self.resume_input_buffer)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(8), // Summary
+                Constraint::Min(0),    // Sessions table
+            ])
+            .split(area);
+
+        // Summary section
+        let tw = analysis.total_cache_writes.max(1) as f64;
+        let total_io = analysis
+            .total_cache_writes
+            .saturating_add(analysis.total_cache_reads);
+        let hit_rate = if total_io > 0 {
+            analysis.total_cache_reads as f64 / total_io as f64 * 100.0
+        } else {
+            0.0
+        };
+
+        let cold_pct = analysis.total_cold_start as f64 / tw * 100.0;
+        let miss_5m_pct = analysis.total_5m_miss as f64 / tw * 100.0;
+        let miss_60m_pct = analysis.total_60m_miss as f64 / tw * 100.0;
+        let churn_pct = analysis.total_normal_churn as f64 / tw * 100.0;
+
+        let summary_lines = vec![
+            Line::from(vec![
+                Span::styled("Overall Hit Rate: ", Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{:.1}%", hit_rate),
+                    Style::default()
+                        .fg(if hit_rate > 70.0 {
+                            Color::Green
+                        } else if hit_rate > 40.0 {
+                            Color::Yellow
+                        } else {
+                            Color::Red
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  |  "),
+                Span::styled(
+                    format!(
+                        "Writes: {}  Reads: {}",
+                        Self::format_tokens_static(analysis.total_cache_writes),
+                        Self::format_tokens_static(analysis.total_cache_reads)
+                    ),
+                    Style::default().fg(Color::Cyan),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Avg Warmup Turn: ", Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{:.1}", analysis.avg_warmup_turn),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw("  |  "),
+                Span::styled("Avg Breakeven Turn: ", Style::default().fg(Color::White)),
+                Span::styled(
+                    format!("{:.1}", analysis.avg_breakeven_turn),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ]),
+            Line::from(""),
+            Line::from(vec![Span::styled(
+                "Cache Write Breakdown:",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )]),
+            Line::from(vec![
+                Span::styled(
+                    format!("  Cold Start: {:>5.1}%", cold_pct),
+                    Style::default().fg(Color::Red),
+                ),
+                Span::raw("  |  "),
+                Span::styled(
+                    format!("5m Miss: {:>5.1}%", miss_5m_pct),
+                    Style::default().fg(Color::Yellow),
+                ),
+                Span::raw("  |  "),
+                Span::styled(
+                    format!("60m Miss: {:>5.1}%", miss_60m_pct),
+                    Style::default().fg(Color::Magenta),
+                ),
+                Span::raw("  |  "),
+                Span::styled(
+                    format!("Normal Churn: {:>5.1}%", churn_pct),
+                    Style::default().fg(Color::Green),
+                ),
+            ]),
+        ];
+
+        let summary = Paragraph::new(summary_lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Cache Analysis Summary"),
+        );
+        f.render_widget(summary, chunks[0]);
+
+        // Sessions table
+        let header_cells = [
+            "Session",
+            "Project",
+            "Turns",
+            "Hit Rate",
+            "Cold Start",
+            "5m Miss",
+            "60m Miss",
+            "Churn",
+            "Breakeven",
+        ]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+        let header = Row::new(header_cells).height(1);
+
+        let rows: Vec<Row> = analysis
+            .sessions
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let style = if i % 2 == 0 {
+                    Style::default()
                 } else {
-                    // Split at character position
-                    let chars: Vec<char> = self.resume_input_buffer.chars().collect();
-                    let before: String = chars.iter().take(self.resume_input_cursor).collect();
-                    let after: String = chars.iter().skip(self.resume_input_cursor).collect();
-                    format!("{}│{}", before, after)
+                    Style::default().bg(Color::Rgb(30, 30, 30))
                 };
 
-                Paragraph::new(display_text)
-                    .style(Style::default().fg(Color::White))
-                    .block(input_block)
-                    .wrap(Wrap { trim: false })
-            };
+                let hit_color = if s.hit_rate_pct > 70.0 {
+                    Color::Green
+                } else if s.hit_rate_pct > 40.0 {
+                    Color::Yellow
+                } else {
+                    Color::Red
+                };
 
-            f.render_widget(input_text, chunks[2]);
+                let session_short = if s.session_id.len() > 12 {
+                    format!("{}...", &s.session_id[..12])
+                } else {
+                    s.session_id.clone()
+                };
+
+                let project_short = if s.project.len() > 20 {
+                    format!("{}...", &s.project[..20])
+                } else {
+                    s.project.clone()
+                };
+
+                let breakeven_str = match s.breakeven_turn {
+                    Some(t) => format!("{}", t),
+                    None => "-".to_string(),
+                };
+
+                Row::new(vec![
+                    Cell::from(session_short).style(style),
+                    Cell::from(project_short).style(style),
+                    Cell::from(format!("{}", s.turn_count)).style(style),
+                    Cell::from(format!("{:.1}%", s.hit_rate_pct))
+                        .style(Style::default().fg(hit_color)),
+                    Cell::from(Self::format_tokens_static(s.cold_start_tokens))
+                        .style(Style::default().fg(Color::Red)),
+                    Cell::from(Self::format_tokens_static(s.ttl_5m_miss_tokens))
+                        .style(Style::default().fg(Color::Yellow)),
+                    Cell::from(Self::format_tokens_static(s.ttl_60m_miss_tokens))
+                        .style(Style::default().fg(Color::Magenta)),
+                    Cell::from(Self::format_tokens_static(s.normal_churn_tokens))
+                        .style(Style::default().fg(Color::Green)),
+                    Cell::from(breakeven_str).style(style),
+                ])
+            })
+            .collect();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(15),
+                Constraint::Length(22),
+                Constraint::Length(6),
+                Constraint::Length(9),
+                Constraint::Length(11),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(10),
+                Constraint::Length(10),
+            ],
+        )
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(format!("Sessions ({} total)", analysis.sessions.len())),
+        )
+        .highlight_style(
+            Style::default()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        );
+
+        f.render_stateful_widget(table, chunks[1], &mut self.cache_table_state);
+    }
+
+    fn format_tokens_static(n: u64) -> String {
+        if n >= 1_000_000 {
+            format!("{:.1}M", n as f64 / 1_000_000.0)
+        } else if n >= 1_000 {
+            format!("{:.0}K", n as f64 / 1_000.0)
+        } else {
+            format!("{}", n)
         }
     }
 
@@ -4481,35 +4201,27 @@ impl TuiApp {
     fn next_tab(&mut self) {
         self.current_tab = match self.current_tab {
             Tab::Overview => Tab::Daily,
-            Tab::Daily => Tab::Sessions,
+            Tab::Daily => Tab::Weekly,
+            Tab::Weekly => Tab::Sessions,
             Tab::Sessions => Tab::Conversations,
-            Tab::Conversations => Tab::Charts,
-            Tab::Charts => Tab::BillingBlocks,
-            Tab::BillingBlocks => Tab::Resume,
-            Tab::Resume => Tab::Help,
+            Tab::Conversations => Tab::Cache,
+            Tab::Cache => Tab::BillingBlocks,
+            Tab::BillingBlocks => Tab::Help,
             Tab::Help => Tab::Overview,
         };
-        // Auto-load removed to prevent hanging
-        // if self.current_tab == Tab::Resume && self.resume_sessions.is_empty() {
-        //     self.load_resume_sessions();
-        // }
     }
 
     fn previous_tab(&mut self) {
         self.current_tab = match self.current_tab {
             Tab::Overview => Tab::Help,
             Tab::Daily => Tab::Overview,
-            Tab::Sessions => Tab::Daily,
+            Tab::Weekly => Tab::Daily,
+            Tab::Sessions => Tab::Weekly,
             Tab::Conversations => Tab::Sessions,
-            Tab::Charts => Tab::Conversations,
-            Tab::BillingBlocks => Tab::Charts,
-            Tab::Resume => Tab::BillingBlocks,
-            Tab::Help => Tab::Resume,
+            Tab::Cache => Tab::Conversations,
+            Tab::BillingBlocks => Tab::Cache,
+            Tab::Help => Tab::BillingBlocks,
         };
-        // Auto-load removed to prevent hanging
-        // if self.current_tab == Tab::Resume && self.resume_sessions.is_empty() {
-        //     self.load_resume_sessions();
-        // }
     }
 
     fn next_item(&mut self) {
@@ -4526,6 +4238,26 @@ impl TuiApp {
                     None => 0,
                 };
                 self.daily_table_state.select(Some(i));
+            }
+            Tab::Weekly => {
+                let len = self
+                    .weekly_report
+                    .as_ref()
+                    .map(|r| r.weekly.len())
+                    .unwrap_or(0);
+                if len > 0 {
+                    let i = match self.weekly_table_state.selected() {
+                        Some(i) => {
+                            if i >= len.saturating_sub(1) {
+                                0
+                            } else {
+                                i + 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    self.weekly_table_state.select(Some(i));
+                }
             }
             Tab::Sessions => {
                 let i = match self.session_table_state.selected() {
@@ -4556,18 +4288,25 @@ impl TuiApp {
                 self.billing_blocks_table_state.select(Some(i));
                 self.billing_blocks_scroll_state = self.billing_blocks_scroll_state.position(i);
             }
-            Tab::Resume => {
-                let i = match self.resume_table_state.selected() {
-                    Some(i) => {
-                        if i >= self.resume_sessions.len().saturating_sub(1) {
-                            0
-                        } else {
-                            i + 1
+            Tab::Cache => {
+                let len = self
+                    .cache_analysis
+                    .as_ref()
+                    .map(|a| a.sessions.len())
+                    .unwrap_or(0);
+                if len > 0 {
+                    let i = match self.cache_table_state.selected() {
+                        Some(i) => {
+                            if i >= len.saturating_sub(1) {
+                                0
+                            } else {
+                                i + 1
+                            }
                         }
-                    }
-                    None => 0,
-                };
-                self.resume_table_state.select(Some(i));
+                        None => 0,
+                    };
+                    self.cache_table_state.select(Some(i));
+                }
             }
             Tab::Conversations => {
                 let i = match self.conversation_table_state.selected() {
@@ -4602,6 +4341,26 @@ impl TuiApp {
                 };
                 self.daily_table_state.select(Some(i));
             }
+            Tab::Weekly => {
+                let len = self
+                    .weekly_report
+                    .as_ref()
+                    .map(|r| r.weekly.len())
+                    .unwrap_or(0);
+                if len > 0 {
+                    let i = match self.weekly_table_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                len.saturating_sub(1)
+                            } else {
+                                i - 1
+                            }
+                        }
+                        None => 0,
+                    };
+                    self.weekly_table_state.select(Some(i));
+                }
+            }
             Tab::Sessions => {
                 let i = match self.session_table_state.selected() {
                     Some(i) => {
@@ -4631,18 +4390,25 @@ impl TuiApp {
                 self.billing_blocks_table_state.select(Some(i));
                 self.billing_blocks_scroll_state = self.billing_blocks_scroll_state.position(i);
             }
-            Tab::Resume => {
-                let i = match self.resume_table_state.selected() {
-                    Some(i) => {
-                        if i == 0 {
-                            self.resume_sessions.len().saturating_sub(1)
-                        } else {
-                            i - 1
+            Tab::Cache => {
+                let len = self
+                    .cache_analysis
+                    .as_ref()
+                    .map(|a| a.sessions.len())
+                    .unwrap_or(0);
+                if len > 0 {
+                    let i = match self.cache_table_state.selected() {
+                        Some(i) => {
+                            if i == 0 {
+                                len.saturating_sub(1)
+                            } else {
+                                i - 1
+                            }
                         }
-                    }
-                    None => 0,
-                };
-                self.resume_table_state.select(Some(i));
+                        None => 0,
+                    };
+                    self.cache_table_state.select(Some(i));
+                }
             }
             Tab::Conversations => {
                 let i = match self.conversation_table_state.selected() {
@@ -4669,6 +4435,9 @@ impl TuiApp {
             Tab::Daily => {
                 self.daily_table_state.select(Some(0));
             }
+            Tab::Weekly => {
+                self.weekly_table_state.select(Some(0));
+            }
             Tab::Sessions => {
                 self.session_table_state.select(Some(0));
                 self.session_scroll_state = self.session_scroll_state.position(0);
@@ -4677,8 +4446,8 @@ impl TuiApp {
                 self.billing_blocks_table_state.select(Some(0));
                 self.billing_blocks_scroll_state = self.billing_blocks_scroll_state.position(0);
             }
-            Tab::Resume => {
-                self.resume_table_state.select(Some(0));
+            Tab::Cache => {
+                self.cache_table_state.select(Some(0));
             }
             _ => {}
         }
@@ -4690,6 +4459,16 @@ impl TuiApp {
                 let len = self.daily_report.daily.len();
                 if len > 0 {
                     self.daily_table_state.select(Some(len - 1));
+                }
+            }
+            Tab::Weekly => {
+                let len = self
+                    .weekly_report
+                    .as_ref()
+                    .map(|r| r.weekly.len())
+                    .unwrap_or(0);
+                if len > 0 {
+                    self.weekly_table_state.select(Some(len - 1));
                 }
             }
             Tab::Sessions => {
@@ -4708,10 +4487,14 @@ impl TuiApp {
                         self.billing_blocks_scroll_state.position(len - 1);
                 }
             }
-            Tab::Resume => {
-                let len = self.resume_sessions.len();
+            Tab::Cache => {
+                let len = self
+                    .cache_analysis
+                    .as_ref()
+                    .map(|a| a.sessions.len())
+                    .unwrap_or(0);
                 if len > 0 {
-                    self.resume_table_state.select(Some(len - 1));
+                    self.cache_table_state.select(Some(len - 1));
                 }
             }
             _ => {}
@@ -4736,7 +4519,7 @@ impl TuiApp {
         // In table context, this means first column or first visible item
         // For simplicity, we'll just jump to the first item in view
         match self.current_tab {
-            Tab::Daily | Tab::Sessions | Tab::BillingBlocks | Tab::Resume => {
+            Tab::Daily | Tab::Weekly | Tab::Sessions | Tab::BillingBlocks | Tab::Cache => {
                 // Already at the start of the line in table view
                 self.status_message = Some("At beginning of line".to_string());
             }
@@ -4747,7 +4530,7 @@ impl TuiApp {
     fn jump_to_line_end(&mut self) {
         // In table context, this means last column or last visible item
         match self.current_tab {
-            Tab::Daily | Tab::Sessions | Tab::BillingBlocks | Tab::Resume => {
+            Tab::Daily | Tab::Weekly | Tab::Sessions | Tab::BillingBlocks | Tab::Cache => {
                 // Already at the end of the line in table view
                 self.status_message = Some("At end of line".to_string());
             }
@@ -4767,9 +4550,10 @@ impl TuiApp {
             self.current_mode = AppMode::Visual;
             self.visual_mode_start = match self.current_tab {
                 Tab::Daily => self.daily_table_state.selected(),
+                Tab::Weekly => self.weekly_table_state.selected(),
                 Tab::Sessions => self.session_table_state.selected(),
                 Tab::BillingBlocks => self.billing_blocks_table_state.selected(),
-                Tab::Resume => self.resume_table_state.selected(),
+                Tab::Cache => self.cache_table_state.selected(),
                 _ => None,
             };
             self.status_message =
@@ -4951,9 +4735,12 @@ impl TuiApp {
                     match selected_tab {
                         0 => self.current_tab = Tab::Overview,
                         1 => self.current_tab = Tab::Daily,
-                        2 => self.current_tab = Tab::Sessions,
-                        3 => self.current_tab = Tab::Charts,
-                        4 => self.current_tab = Tab::Help,
+                        2 => self.current_tab = Tab::Weekly,
+                        3 => self.current_tab = Tab::Sessions,
+                        4 => self.current_tab = Tab::Conversations,
+                        5 => self.current_tab = Tab::Cache,
+                        6 => self.current_tab = Tab::BillingBlocks,
+                        7 => self.current_tab = Tab::Help,
                         _ => {}
                     }
                 } else {
@@ -4997,57 +4784,30 @@ impl TuiApp {
 
     fn handle_enter(&mut self) {
         // Handle enter key based on current tab
-        match self.current_tab {
-            Tab::Resume => {
-                // Open Claude session in browser
-                if let Some(selected) = self.resume_table_state.selected()
-                    && let Some(resume_session) = self.resume_sessions.get(selected)
-                {
-                    if let Some(session_data) = &resume_session.session_data {
-                        let parser = ClaudeSessionParser::new(None);
-                        match parser.open_session(session_data) {
-                            Ok(_) => {
-                                self.status_message =
-                                    Some("🚀 Opening session in browser...".to_string());
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    Some(format!("❌ Failed to open session: {}", e));
-                            }
-                        }
-                    } else {
-                        self.status_message =
-                            Some("ℹ️ This is a demo session (no real data)".to_string());
-                    }
-                }
-            }
-            Tab::Sessions => {
-                // Copy session info to clipboard
-                if let Some(selected) = self.session_table_state.selected()
-                    && let Some(session) = self.session_report.sessions.get(selected)
-                {
-                    let info = format!(
-                        "Project: {}, Session: {}, Cost: ${:.2}, Tokens: {}",
-                        session.project_path,
-                        session.session_id,
-                        session.total_cost,
-                        session.total_tokens
-                    );
+        if self.current_tab == Tab::Sessions {
+            // Copy session info to clipboard
+            if let Some(selected) = self.session_table_state.selected()
+                && let Some(session) = self.session_report.sessions.get(selected)
+            {
+                let info = format!(
+                    "Project: {}, Session: {}, Cost: ${:.2}, Tokens: {}",
+                    session.project_path,
+                    session.session_id,
+                    session.total_cost,
+                    session.total_tokens
+                );
 
-                    if let Ok(mut ctx) = ClipboardContext::new() {
-                        if ctx.set_contents(info.clone()).is_ok() {
-                            self.status_message =
-                                Some("📋 Copied session info to clipboard".to_string());
-                        } else {
-                            self.status_message =
-                                Some("❌ Failed to copy to clipboard".to_string());
-                        }
+                if let Ok(mut ctx) = ClipboardContext::new() {
+                    if ctx.set_contents(info.clone()).is_ok() {
+                        self.status_message =
+                            Some("📋 Copied session info to clipboard".to_string());
                     } else {
-                        self.status_message = Some("❌ Clipboard not available".to_string());
+                        self.status_message = Some("❌ Failed to copy to clipboard".to_string());
                     }
+                } else {
+                    self.status_message = Some("❌ Clipboard not available".to_string());
                 }
             }
-            _ => {}
         }
     }
 
@@ -5171,8 +4931,10 @@ impl TuiApp {
         } else {
             match self.current_tab {
                 Tab::Daily => "Daily Report",
+                Tab::Weekly => "Weekly Report",
                 Tab::Sessions => "Sessions Report",
                 Tab::BillingBlocks => "Billing Blocks",
+                Tab::Cache => "Cache Analysis",
                 Tab::Overview => "Summary",
                 _ => "Current View",
             }

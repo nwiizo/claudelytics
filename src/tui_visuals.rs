@@ -94,6 +94,7 @@ impl LoadingAnimation {
 pub enum AnimationStyle {
     #[allow(dead_code)]
     Braille,
+    #[allow(dead_code)]
     Dots,
     Spinner,
     #[allow(dead_code)]
