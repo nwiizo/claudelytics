@@ -56,7 +56,7 @@ impl TuiApp {
                     Style::default().fg(Color::White),
                 ),
                 Span::styled(
-                    self.format_number(self.daily_report.totals.total_tokens),
+                    Self::format_number(self.daily_report.totals.total_tokens),
                     Style::default()
                         .fg(Color::Magenta)
                         .add_modifier(Modifier::BOLD),
@@ -65,20 +65,20 @@ impl TuiApp {
             Line::from(vec![
                 Span::styled("\u{1f4e5} Input: ", Style::default().fg(Color::White)),
                 Span::styled(
-                    self.format_number(self.daily_report.totals.input_tokens),
+                    Self::format_number(self.daily_report.totals.input_tokens),
                     Style::default().fg(Color::Green),
                 ),
                 Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
                 Span::styled("\u{1f4e4} Output: ", Style::default().fg(Color::White)),
                 Span::styled(
-                    self.format_number(self.daily_report.totals.output_tokens),
+                    Self::format_number(self.daily_report.totals.output_tokens),
                     Style::default().fg(Color::Blue),
                 ),
             ]),
             Line::from(vec![
                 Span::styled("\u{1f504} Cache: ", Style::default().fg(Color::White)),
                 Span::styled(
-                    self.format_number(
+                    Self::format_number(
                         self.daily_report.totals.cache_creation_tokens
                             + self.daily_report.totals.cache_read_tokens,
                     ),
@@ -171,7 +171,7 @@ impl TuiApp {
                     Style::default().fg(Color::White),
                 ),
                 Span::styled(
-                    self.format_number(if self.daily_report.daily.is_empty() {
+                    Self::format_number(if self.daily_report.daily.is_empty() {
                         0
                     } else {
                         self.daily_report.totals.total_tokens / self.daily_report.daily.len() as u64

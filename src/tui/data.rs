@@ -5,9 +5,9 @@ use super::{SortMode, Tab, TimeFilter, TuiApp};
 
 impl TuiApp {
     pub(crate) fn refresh_data(&mut self) -> Result<()> {
-        self.status_message = Some("\u{1f504} Data refreshed successfully!".to_string());
+        self.status_message = Some("Filters reset to original data".to_string());
 
-        // Reset to original data to simulate refresh
+        // Reset to original data (does not re-read from disk)
         self.daily_report = self.original_daily_report.clone();
         self.session_report = self.original_session_report.clone();
         self.apply_filters();

@@ -1,7 +1,9 @@
+use ratatui::style::Color;
+
 use super::TuiApp;
 
 impl TuiApp {
-    pub(crate) fn format_number(&self, num: u64) -> String {
+    pub(crate) fn format_number(num: u64) -> String {
         if num == 0 {
             "0".to_string()
         } else {
@@ -20,11 +22,12 @@ impl TuiApp {
         }
     }
 
-    pub(crate) fn truncate_text(&self, text: &str, max_length: usize) -> String {
-        if text.len() <= max_length {
+    pub(crate) fn truncate_text(text: &str, max_length: usize) -> String {
+        if text.chars().count() <= max_length {
             text.to_string()
         } else {
-            format!("{}...", &text[..max_length.saturating_sub(3)])
+            let truncated: String = text.chars().take(max_length.saturating_sub(3)).collect();
+            format!("{}...", truncated)
         }
     }
 
@@ -35,6 +38,26 @@ impl TuiApp {
             format!("{:.0}K", n as f64 / 1_000.0)
         } else {
             format!("{}", n)
+        }
+    }
+
+    pub(crate) fn cost_color(cost: f64) -> Color {
+        if cost > 1.0 {
+            Color::Red
+        } else if cost > 0.5 {
+            Color::Yellow
+        } else {
+            Color::Green
+        }
+    }
+
+    pub(crate) fn cache_hit_color(pct: f64) -> Color {
+        if pct > 95.0 {
+            Color::Green
+        } else if pct > 85.0 {
+            Color::Yellow
+        } else {
+            Color::Red
         }
     }
 }

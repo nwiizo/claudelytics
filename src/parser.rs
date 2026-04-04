@@ -291,10 +291,6 @@ impl UsageParser {
                     *last = stem;
                 }
 
-                if components.is_empty() {
-                    continue;
-                }
-
                 // Return "project-dir/session-uuid" or "project-dir/subdir/session-uuid"
                 return Ok(components.join("/"));
             }

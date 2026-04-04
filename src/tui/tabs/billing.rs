@@ -235,7 +235,7 @@ impl TuiApp {
                 Cell::from(format!("{} - {}", &block.date, &block.time_range)).style(style),
                 Cell::from(format!("${:.2}", block.usage.total_cost))
                     .style(Style::default().fg(cost_color)),
-                Cell::from(self.format_number(block.usage.total_tokens()))
+                Cell::from(Self::format_number(block.usage.total_tokens()))
                     .style(Style::default().fg(Color::Magenta)),
                 Cell::from(format!("{}", block.session_count))
                     .style(Style::default().fg(Color::Blue)),

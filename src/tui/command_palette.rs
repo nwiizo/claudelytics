@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::widgets::ScrollbarState;
 
-use super::{AppMode, Tab, TuiApp};
+use super::{AppMode, TuiApp};
 use crate::models::CommandAction;
 
 impl TuiApp {
@@ -69,16 +69,7 @@ impl TuiApp {
     fn execute_command(&mut self, action: &CommandAction) -> Result<()> {
         match action {
             CommandAction::SwitchTab(index) => {
-                self.current_tab = match index {
-                    0 => Tab::Overview,
-                    1 => Tab::Daily,
-                    2 => Tab::Weekly,
-                    3 => Tab::Sessions,
-                    4 => Tab::Cache,
-                    5 => Tab::BillingBlocks,
-                    6 => Tab::Help,
-                    _ => Tab::Overview,
-                };
+                self.set_current_tab(*index);
                 self.status_message = Some(format!("Switched to tab {}", index + 1));
             }
             CommandAction::ExportData(_) => {

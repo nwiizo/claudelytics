@@ -87,14 +87,10 @@ impl TuiApp {
                 self.previous_item();
             }
             KeyCode::PageDown => {
-                for _ in 0..10 {
-                    self.next_item();
-                }
+                self.half_page_down();
             }
             KeyCode::PageUp => {
-                for _ in 0..10 {
-                    self.previous_item();
-                }
+                self.half_page_up();
             }
             // Enhanced vim navigation
             KeyCode::Char('g') => {
@@ -248,11 +244,9 @@ impl TuiApp {
                 self.update_search_status();
             }
             KeyCode::Char(c) => {
-                if c != 'w' && c != 'b' {
-                    self.search_query.insert(self.search_cursor_position, c);
-                    self.search_cursor_position += 1;
-                    self.update_search_status();
-                }
+                self.search_query.insert(self.search_cursor_position, c);
+                self.search_cursor_position += 1;
+                self.update_search_status();
             }
             _ => {}
         }

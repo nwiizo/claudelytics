@@ -103,11 +103,11 @@ impl TuiApp {
                 Row::new(vec![
                     Cell::from(week_range).style(style),
                     Cell::from(format!("{}", w.days_active)).style(style),
-                    Cell::from(self.format_number(w.input_tokens))
+                    Cell::from(Self::format_number(w.input_tokens))
                         .style(Style::default().fg(Color::Blue)),
-                    Cell::from(self.format_number(w.output_tokens))
+                    Cell::from(Self::format_number(w.output_tokens))
                         .style(Style::default().fg(Color::Cyan)),
-                    Cell::from(self.format_number(w.total_tokens))
+                    Cell::from(Self::format_number(w.total_tokens))
                         .style(Style::default().fg(Color::Magenta)),
                     Cell::from(format!("${:.2}", w.total_cost))
                         .style(Style::default().fg(cost_color)),
@@ -155,17 +155,17 @@ impl TuiApp {
             ),
             Span::raw(" | "),
             Span::styled(
-                format!("Tokens: {}", self.format_number(totals.total_tokens)),
+                format!("Tokens: {}", Self::format_number(totals.total_tokens)),
                 Style::default().fg(Color::Magenta),
             ),
             Span::raw(" | "),
             Span::styled(
-                format!("In: {}", self.format_number(totals.input_tokens)),
+                format!("In: {}", Self::format_number(totals.input_tokens)),
                 Style::default().fg(Color::Blue),
             ),
             Span::raw(" | "),
             Span::styled(
-                format!("Out: {}", self.format_number(totals.output_tokens)),
+                format!("Out: {}", Self::format_number(totals.output_tokens)),
                 Style::default().fg(Color::Cyan),
             ),
         ]))

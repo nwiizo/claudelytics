@@ -53,7 +53,7 @@ impl TuiApp {
             SortMode::Cost => "Cost",
             SortMode::Tokens => "Tokens",
             SortMode::Efficiency => "Efficiency",
-            SortMode::Project => "Date",
+            SortMode::Project => "Date (no project)",
         };
 
         let controls = Paragraph::new(controls_text)
@@ -93,34 +93,23 @@ impl TuiApp {
                 0.0
             };
 
-            let cost_color = if day.total_cost > 1.0 {
-                Color::Red
-            } else if day.total_cost > 0.5 {
-                Color::Yellow
-            } else {
-                Color::Green
-            };
-
-            let hit_color = if cache_hit_pct > 95.0 {
-                Color::Green
-            } else if cache_hit_pct > 85.0 {
-                Color::Yellow
-            } else {
-                Color::Red
-            };
+            let cost_color = Self::cost_color(day.total_cost);
+            let hit_color = Self::cache_hit_color(cache_hit_pct);
 
             Row::new(vec![
                 Cell::from(day.date.clone()).style(style),
                 Cell::from(format!("${:.2}", day.total_cost))
                     .style(Style::default().fg(cost_color)),
-                Cell::from(self.format_number(day.total_tokens))
+                Cell::from(Self::format_number(day.total_tokens))
                     .style(Style::default().fg(Color::Magenta)),
-                Cell::from(self.format_number(day.input_tokens))
+                Cell::from(Self::format_number(day.input_tokens))
                     .style(Style::default().fg(Color::Blue)),
-                Cell::from(self.format_number(day.output_tokens))
+                Cell::from(Self::format_number(day.output_tokens))
                     .style(Style::default().fg(Color::Cyan)),
-                Cell::from(self.format_number(day.cache_creation_tokens + day.cache_read_tokens))
-                    .style(Style::default().fg(Color::Yellow)),
+                Cell::from(Self::format_number(
+                    day.cache_creation_tokens + day.cache_read_tokens,
+                ))
+                .style(Style::default().fg(Color::Yellow)),
                 Cell::from(format!("{:.1}%", cache_hit_pct)).style(Style::default().fg(hit_color)),
             ])
             .height(1)

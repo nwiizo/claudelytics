@@ -199,21 +199,9 @@ impl TuiApp {
                     0.0
                 };
 
-                let cost_color = if session.total_cost > 1.0 {
-                    Color::Red
-                } else if session.total_cost > 0.5 {
-                    Color::Yellow
-                } else {
-                    Color::Green
-                };
+                let cost_color = Self::cost_color(session.total_cost);
 
-                let hit_color = if cache_hit_pct > 95.0 {
-                    Color::Green
-                } else if cache_hit_pct > 85.0 {
-                    Color::Yellow
-                } else {
-                    Color::Red
-                };
+                let hit_color = Self::cache_hit_color(cache_hit_pct);
 
                 let style = if self.current_mode == AppMode::Visual
                     && self.visual_mode_selections.contains(&i)
@@ -226,11 +214,11 @@ impl TuiApp {
                 };
 
                 Row::new(vec![
-                    Cell::from(self.truncate_text(&project_name, 30)).style(style),
+                    Cell::from(Self::truncate_text(&project_name, 30)).style(style),
                     Cell::from(session_short).style(Style::default().fg(Color::DarkGray)),
                     Cell::from(format!("${:.2}", session.total_cost))
                         .style(Style::default().fg(cost_color)),
-                    Cell::from(self.format_number(session.total_tokens))
+                    Cell::from(Self::format_number(session.total_tokens))
                         .style(Style::default().fg(Color::Magenta)),
                     Cell::from(format!("{:.1}%", cache_hit_pct))
                         .style(Style::default().fg(hit_color)),

@@ -293,8 +293,8 @@ impl TuiApp {
                                     c.to_string()
                                 };
                                 let effect_pos = Rect {
-                                    x: terminal.size()?.width / 2 - 2,
-                                    y: terminal.size()?.height - 5,
+                                    x: (terminal.size()?.width / 2).saturating_sub(2),
+                                    y: terminal.size()?.height.saturating_sub(5),
                                     width: 5,
                                     height: 1,
                                 };
