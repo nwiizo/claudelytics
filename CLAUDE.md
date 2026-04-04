@@ -12,6 +12,7 @@ Parses JSONL from `~/.claude/projects/` and `~/.config/claude/projects/`.
 ```bash
 cargo fmt && cargo clippy -- -D warnings && cargo test
 similarity-rs ./src --min-tokens 50   # post-implementation duplication check
+cargo coupling --exclude-tests --hotspots=10  # coupling analysis
 cargo test -- --ignored               # integration tests with sample data
 ```
 
