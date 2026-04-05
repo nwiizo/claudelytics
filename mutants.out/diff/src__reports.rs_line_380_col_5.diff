@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace sort_session_entries with ()
+@@ -372,17 +372,17 @@
+     sort_entries(entries, sort_field, sort_order);
+ }
+ 
+ fn sort_session_entries(
+     entries: &mut [SessionUsage],
+     sort_field: Option<SortField>,
+     sort_order: Option<SortOrder>,
+ ) {
+-    sort_entries(entries, sort_field, sort_order);
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn sort_monthly_entries(
+     entries: &mut [MonthlyUsage],
+     sort_field: Option<SortField>,
+     sort_order: Option<SortOrder>,
+ ) {
+     sort_entries(entries, sort_field, sort_order);

@@ -1,0 +1,53 @@
+--- src/parser.rs
++++ replace UsageParser::apply_cost_mode with ()
+@@ -369,49 +369,17 @@
+             .as_ref()
+             .and_then(|m| m.usage.as_ref())
+             .map(|u| u.is_fast_mode())
+             .unwrap_or(false)
+     }
+ 
+     /// Apply cost based on the configured cost mode
+     fn apply_cost_mode(&self, usage: &mut TokenUsage, record: &UsageRecord, is_fast: bool) {
+-        match self.cost_mode {
+-            CostMode::Display => {
+-                // Only use costUSD from JSONL
+-                usage.total_cost = record.cost_usd.unwrap_or(0.0);
+-            }
+-            CostMode::Calculate => {
+-                // Always recalculate from tokens - zero out any costUSD leak
+-                usage.total_cost = 0.0;
+-                if let Some(model_name) = record.get_model_name() {
+-                    let calculated = self.calculate_cost_for_record(record, model_name);
+-                    if calculated > 0.0 {
+-                        usage.total_cost = calculated;
+-                    }
+-                }
+-            }
+-            CostMode::Auto => {
+-                // Use costUSD if positive, otherwise calculate from tokens
+-                let has_jsonl_cost = record.cost_usd.is_some_and(|c| c > 0.0);
+-                if has_jsonl_cost {
+-                    usage.total_cost = record.cost_usd.unwrap_or(0.0);
+-                } else if let Some(model_name) = record.get_model_name() {
+-                    let calculated = self.calculate_cost_for_record(record, model_name);
+-                    if calculated > 0.0 {
+-                        usage.total_cost = calculated;
+-                    }
+-                }
+-            }
+-        }
+-
+-        // Track fast mode cost separately
+-        if is_fast {
+-            usage.fast_mode_cost = usage.total_cost;
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ fn parse_date(date_str: &str) -> Result<NaiveDate> {
+     if date_str.len() != 8 {
+         anyhow::bail!("Date must be in YYYYMMDD format");
+     }
+ 

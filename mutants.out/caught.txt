@@ -1,0 +1,48 @@
+src/billing_blocks.rs:40:55: replace * with + in BillingBlock::normalize_to_block_start
+src/billing_blocks.rs:40:55: replace * with / in BillingBlock::normalize_to_block_start
+src/billing_blocks.rs:40:32: replace / with % in BillingBlock::normalize_to_block_start
+src/billing_blocks.rs:40:32: replace / with * in BillingBlock::normalize_to_block_start
+src/billing_blocks.rs:51:9: replace BillingBlock::contains -> bool with true
+src/billing_blocks.rs:51:9: replace BillingBlock::contains -> bool with false
+src/billing_blocks.rs:51:33: replace && with || in BillingBlock::contains
+src/billing_blocks.rs:51:14: replace >= with < in BillingBlock::contains
+src/billing_blocks.rs:51:41: replace < with == in BillingBlock::contains
+src/billing_blocks.rs:51:41: replace < with > in BillingBlock::contains
+src/billing_blocks.rs:51:41: replace < with <= in BillingBlock::contains
+src/billing_blocks.rs:92:9: replace BillingBlockManager::add_usage with ()
+src/billing_blocks.rs:100:36: replace * with / in BillingBlockManager::add_usage
+src/billing_blocks.rs:114:41: replace += with -= in BillingBlockManager::add_usage
+src/billing_blocks.rs:114:41: replace += with *= in BillingBlockManager::add_usage
+src/billing_blocks.rs:124:9: replace BillingBlockManager::get_blocks_for_date -> Option<&Vec<BillingBlock>> with None
+src/billing_blocks.rs:124:9: replace BillingBlockManager::get_blocks_for_date -> Option<&Vec<BillingBlock>> with Some(Box::leak(Box::new(vec![])))
+src/billing_blocks.rs:129:9: replace BillingBlockManager::get_all_blocks -> Vec<(NaiveDate, &BillingBlock)> with vec![]
+src/billing_blocks.rs:100:36: replace * with + in BillingBlockManager::add_usage
+src/billing_blocks.rs:167:9: replace BillingBlockManager::total_usage -> TokenUsage with Default::default()
+src/parser.rs:67:22: replace > with < in UsageParser::new_multi
+src/parser.rs:67:22: replace > with == in UsageParser::new_multi
+src/parser.rs:85:9: replace UsageParser::parse_all -> Result<(DailyUsageMap, SessionUsageMap, BillingBlockManager)> with Ok((Default::default(), Default::default(), Default::default()))
+src/parser.rs:147:9: replace UsageParser::find_jsonl_files -> Result<Vec<PathBuf>> with Ok(vec![])
+src/parser.rs:152:16: delete ! in UsageParser::find_jsonl_files
+src/parser.rs:147:9: replace UsageParser::find_jsonl_files -> Result<Vec<PathBuf>> with Ok(vec![Default::default()])
+src/parser.rs:166:40: replace == with != in UsageParser::find_jsonl_files
+src/parser.rs:200:9: replace UsageParser::parse_file_with_billing -> Result<(DailyUsageMap, SessionUsageMap)> with Ok((Default::default(), Default::default()))
+src/parser.rs:274:9: replace UsageParser::extract_session_info -> Result<String> with Ok(String::new())
+src/parser.rs:274:9: replace UsageParser::extract_session_info -> Result<String> with Ok("xyzzy".into())
+src/parser.rs:303:9: replace UsageParser::should_include_record -> bool with true
+src/parser.rs:303:9: replace UsageParser::should_include_record -> bool with false
+src/parser.rs:310:21: replace < with == in UsageParser::should_include_record
+src/parser.rs:310:21: replace < with > in UsageParser::should_include_record
+src/parser.rs:316:21: replace > with == in UsageParser::should_include_record
+src/parser.rs:316:21: replace > with < in UsageParser::should_include_record
+src/parser.rs:324:20: delete ! in UsageParser::should_include_record
+src/parser.rs:414:5: replace parse_date -> Result<NaiveDate> with Ok(Default::default())
+src/parser.rs:414:23: replace != with == in parse_date
+src/pricing.rs:226:5: replace get_fallback_pricing -> HashMap<String, ModelPricing> with HashMap::new()
+src/reports.rs:392:5: replace parse_session_path -> (String, String) with (String::new(), String::new())
+src/reports.rs:392:5: replace parse_session_path -> (String, String) with (String::new(), "xyzzy".into())
+src/reports.rs:392:5: replace parse_session_path -> (String, String) with ("xyzzy".into(), String::new())
+src/reports.rs:392:5: replace parse_session_path -> (String, String) with ("xyzzy".into(), "xyzzy".into())
+src/reports.rs:394:43: replace > with == in parse_session_path
+src/reports.rs:394:43: replace > with < in parse_session_path
+src/reports.rs:395:33: replace - with + in parse_session_path
+src/reports.rs:395:33: replace - with / in parse_session_path

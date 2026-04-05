@@ -1,0 +1,74 @@
+--- src/pricing.rs
++++ replace PricingFetcher::calculate_tiered_cost -> f64 with 0.0
+@@ -158,70 +158,17 @@
+         pricing: &ModelPricing,
+         input_tokens: u64,
+         output_tokens: u64,
+         cache_creation_tokens: u64,
+         cache_read_tokens: u64,
+         total_input_context: u64,
+     ) -> f64 {
+         // Ratio of tokens below/above the threshold
+-        let below_ratio = TIERED_THRESHOLD as f64 / total_input_context as f64;
+-        let above_ratio = 1.0 - below_ratio;
+-
+-        let mut total_cost = 0.0;
+-
+-        // Input tokens: split proportionally
+-        if let (Some(base), Some(tiered)) = (
+-            pricing.input_cost_per_token,
+-            pricing.input_cost_per_token_above_200k,
+-        ) {
+-            let below = (input_tokens as f64 * below_ratio) * base;
+-            let above = (input_tokens as f64 * above_ratio) * tiered;
+-            total_cost += below + above;
+-        } else if let Some(base) = pricing.input_cost_per_token {
+-            total_cost += input_tokens as f64 * base;
+-        }
+-
+-        // Output tokens: split proportionally like input tokens
+-        if let (Some(base), Some(tiered)) = (
+-            pricing.output_cost_per_token,
+-            pricing.output_cost_per_token_above_200k,
+-        ) {
+-            let below = (output_tokens as f64 * below_ratio) * base;
+-            let above = (output_tokens as f64 * above_ratio) * tiered;
+-            total_cost += below + above;
+-        } else if let Some(base) = pricing.output_cost_per_token {
+-            total_cost += output_tokens as f64 * base;
+-        }
+-
+-        // Cache creation tokens
+-        if let (Some(base), Some(tiered)) = (
+-            pricing.cache_creation_input_token_cost,
+-            pricing.cache_creation_cost_above_200k,
+-        ) {
+-            let below = (cache_creation_tokens as f64 * below_ratio) * base;
+-            let above = (cache_creation_tokens as f64 * above_ratio) * tiered;
+-            total_cost += below + above;
+-        } else if let Some(base) = pricing.cache_creation_input_token_cost {
+-            total_cost += cache_creation_tokens as f64 * base;
+-        }
+-
+-        // Cache read tokens
+-        if let (Some(base), Some(tiered)) = (
+-            pricing.cache_read_input_token_cost,
+-            pricing.cache_read_cost_above_200k,
+-        ) {
+-            let below = (cache_read_tokens as f64 * below_ratio) * base;
+-            let above = (cache_read_tokens as f64 * above_ratio) * tiered;
+-            total_cost += below + above;
+-        } else if let Some(base) = pricing.cache_read_input_token_cost {
+-            total_cost += cache_read_tokens as f64 * base;
+-        }
+-
+-        total_cost
++        0.0 /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ // Fallback pricing for common Claude models (as of 2025)
+ // Updated to match ccusage pricing methodology
+ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
+     let mut pricing = HashMap::new();
+ 

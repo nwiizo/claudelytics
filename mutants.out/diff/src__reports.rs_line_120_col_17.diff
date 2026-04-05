@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ delete match arm 2 in generate_monthly_report_sorted
+@@ -112,17 +112,17 @@
+     }
+ 
+     // Convert to MonthlyUsage entries
+     let mut monthly_entries: Vec<MonthlyUsage> = monthly_map
+         .into_iter()
+         .map(|((year, month), (usage, days_active))| {
+             let month_name = match month {
+                 1 => "January",
+-                2 => "February",
++                 /* ~ changed by cargo-mutants ~ */
+                 3 => "March",
+                 4 => "April",
+                 5 => "May",
+                 6 => "June",
+                 7 => "July",
+                 8 => "August",
+                 9 => "September",
+                 10 => "October",

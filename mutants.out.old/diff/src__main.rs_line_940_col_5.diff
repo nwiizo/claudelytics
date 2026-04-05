@@ -1,0 +1,24 @@
+--- src/main.rs
++++ replace main with ()
+@@ -932,20 +932,17 @@
+             long_help = "Display timeline of session activity"
+         )]
+         timeline: bool,
+     },
+ }
+ 
+ /// Application entry point
+ fn main() {
+-    if let Err(e) = run() {
+-        print_error(&format!("{}", e));
+-        std::process::exit(1);
+-    }
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Main application logic
+ fn run() -> Result<()> {
+     let cli = Cli::parse();
+ 
+     // Handle --list-models flag
+     if cli.list_models {

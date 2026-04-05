@@ -422,7 +422,7 @@ mod tests {
     #[test]
     fn test_daily_report_generation() {
         let mut daily_map = HashMap::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid date");
         let usage = TokenUsage {
             input_tokens: 1000,
             output_tokens: 2000,
@@ -438,5 +438,123 @@ mod tests {
         assert_eq!(report.daily[0].date, "2024-01-01");
         assert_eq!(report.totals.input_tokens, 1000);
         assert_eq!(report.totals.total_tokens, 3800);
+    }
+
+    #[test]
+    fn test_daily_report_sort_by_cost() {
+        let mut daily_map = HashMap::new();
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid"),
+            TokenUsage {
+                total_cost: 1.0,
+                ..Default::default()
+            },
+        );
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("valid"),
+            TokenUsage {
+                total_cost: 5.0,
+                ..Default::default()
+            },
+        );
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 1, 3).expect("valid"),
+            TokenUsage {
+                total_cost: 2.0,
+                ..Default::default()
+            },
+        );
+
+        let report =
+            generate_daily_report_sorted(daily_map, Some(SortField::Cost), Some(SortOrder::Desc));
+        assert_eq!(report.daily.len(), 3);
+        assert!(report.daily[0].total_cost >= report.daily[1].total_cost);
+        assert!(report.daily[1].total_cost >= report.daily[2].total_cost);
+    }
+
+    #[test]
+    fn test_weekly_report_generation() {
+        let mut daily_map = HashMap::new();
+        for day in 1..=7 {
+            daily_map.insert(
+                NaiveDate::from_ymd_opt(2024, 1, day).expect("valid"),
+                TokenUsage {
+                    input_tokens: 100,
+                    output_tokens: 200,
+                    total_cost: 0.5,
+                    ..Default::default()
+                },
+            );
+        }
+
+        let report = generate_weekly_report_sorted(daily_map, None, None, chrono::Weekday::Mon);
+        assert!(!report.weekly.is_empty());
+        assert_eq!(report.totals.input_tokens, 700);
+        // Check avg_daily_cost is computed
+        let week = &report.weekly[0];
+        assert!(week.avg_daily_cost > 0.0);
+        assert!(week.days_active > 0);
+    }
+
+    #[test]
+    fn test_monthly_report_generation() {
+        let mut daily_map = HashMap::new();
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 1, 15).expect("valid"),
+            TokenUsage {
+                input_tokens: 500,
+                output_tokens: 1000,
+                total_cost: 2.0,
+                ..Default::default()
+            },
+        );
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 2, 10).expect("valid"),
+            TokenUsage {
+                input_tokens: 300,
+                output_tokens: 600,
+                total_cost: 1.0,
+                ..Default::default()
+            },
+        );
+
+        let report = generate_monthly_report_sorted(daily_map, None, None);
+        assert_eq!(report.monthly.len(), 2);
+        assert_eq!(report.totals.input_tokens, 800);
+    }
+
+    #[test]
+    fn test_get_week_start() {
+        let date = NaiveDate::from_ymd_opt(2024, 1, 3).expect("valid"); // Wednesday
+        let week_start = get_week_start(date, chrono::Weekday::Mon);
+        assert_eq!(
+            week_start,
+            NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid")
+        ); // Monday
+    }
+
+    #[test]
+    fn test_sort_entries_by_tokens() {
+        let mut daily_map = HashMap::new();
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 1, 1).expect("valid"),
+            TokenUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+                ..Default::default()
+            },
+        );
+        daily_map.insert(
+            NaiveDate::from_ymd_opt(2024, 1, 2).expect("valid"),
+            TokenUsage {
+                input_tokens: 500,
+                output_tokens: 200,
+                ..Default::default()
+            },
+        );
+
+        let report =
+            generate_daily_report_sorted(daily_map, Some(SortField::Tokens), Some(SortOrder::Desc));
+        assert!(report.daily[0].total_tokens >= report.daily[1].total_tokens);
     }
 }

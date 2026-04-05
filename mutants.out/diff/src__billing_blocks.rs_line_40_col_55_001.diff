@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace * with / in BillingBlock::normalize_to_block_start
+@@ -32,17 +32,17 @@
+             session_count: 0,
+         }
+     }
+ 
+     /// Normalize a timestamp to the start of its billing block
+     /// Billing blocks start at 00:00, 05:00, 10:00, 15:00, 20:00 UTC
+     pub fn normalize_to_block_start(time: DateTime<Utc>) -> DateTime<Utc> {
+         let hour = time.hour() as i64;
+-        let block_hour = (hour / BILLING_BLOCK_HOURS) * BILLING_BLOCK_HOURS;
++        let block_hour = (hour / BILLING_BLOCK_HOURS) / /* ~ changed by cargo-mutants ~ */ BILLING_BLOCK_HOURS;
+ 
+         time.date_naive()
+             .and_hms_opt(block_hour as u32, 0, 0)
+             .unwrap()
+             .and_local_timezone(Utc)
+             .unwrap()
+     }
+ 

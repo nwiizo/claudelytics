@@ -1,0 +1,44 @@
+--- src/parser.rs
++++ replace UsageParser::calculate_cost_for_record -> f64 with -1.0
+@@ -331,40 +331,17 @@
+         }
+ 
+         true
+     }
+ 
+     /// Calculate cost for a single record from token counts and model pricing.
+     /// Returns cost with fast mode multiplier already applied if applicable.
+     fn calculate_cost_for_record(&self, record: &UsageRecord, model_name: &str) -> f64 {
+-        let fallback_pricing = &self.fallback_pricing;
+-
+-        if let Some(pricing) = self
+-            .pricing_fetcher
+-            .get_model_pricing(fallback_pricing, model_name)
+-            && let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref())
+-        {
+-            let base_cost = self.pricing_fetcher.calculate_cost(
+-                &pricing,
+-                usage.input_tokens,
+-                usage.output_tokens,
+-                usage.cache_creation_input_tokens,
+-                usage.cache_read_input_tokens,
+-            );
+-
+-            // Apply fast mode multiplier if speed is "fast"
+-            if usage.is_fast_mode() {
+-                return base_cost * FAST_MODE_MULTIPLIER;
+-            }
+-
+-            return base_cost;
+-        }
+-
+-        0.0
++        -1.0 /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Check if a record is using fast mode
+     fn is_fast_mode_record(record: &UsageRecord) -> bool {
+         record
+             .message
+             .as_ref()
+             .and_then(|m| m.usage.as_ref())

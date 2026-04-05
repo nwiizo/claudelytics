@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ delete match arm 11 in generate_monthly_report_sorted
+@@ -121,17 +121,17 @@
+                 3 => "March",
+                 4 => "April",
+                 5 => "May",
+                 6 => "June",
+                 7 => "July",
+                 8 => "August",
+                 9 => "September",
+                 10 => "October",
+-                11 => "November",
++                 /* ~ changed by cargo-mutants ~ */
+                 12 => "December",
+                 _ => "Unknown",
+             };
+ 
+             MonthlyUsage {
+                 month: month_name.to_string(),
+                 year,
+                 input_tokens: usage.input_tokens,

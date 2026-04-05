@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace <impl Sortable for DailyUsage>::default_sort_field -> SortField with Default::default()
+@@ -287,17 +287,17 @@
+             SortField::Date => self.date.cmp(&other.date),
+             SortField::Cost => compare_floats(self.total_cost, other.total_cost),
+             SortField::Tokens => self.total_tokens.cmp(&other.total_tokens),
+             _ => self.date.cmp(&other.date), // Default to date for unsupported fields
+         }
+     }
+ 
+     fn default_sort_field() -> SortField {
+-        SortField::Date
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl Sortable for SessionUsage {
+     fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering {
+         match field {
+             SortField::Date => self.last_activity.cmp(&other.last_activity),
+             SortField::Cost => compare_floats(self.total_cost, other.total_cost),

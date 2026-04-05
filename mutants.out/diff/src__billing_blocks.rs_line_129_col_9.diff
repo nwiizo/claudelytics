@@ -1,0 +1,34 @@
+--- src/billing_blocks.rs
++++ replace BillingBlockManager::get_all_blocks -> Vec<(NaiveDate, &BillingBlock)> with vec![]
+@@ -121,30 +121,17 @@
+     /// Get billing blocks for a specific date
+     #[allow(dead_code)]
+     pub fn get_blocks_for_date(&self, date: NaiveDate) -> Option<&Vec<BillingBlock>> {
+         self.blocks.get(&date)
+     }
+ 
+     /// Get all billing blocks sorted by date and block index
+     pub fn get_all_blocks(&self) -> Vec<(NaiveDate, &BillingBlock)> {
+-        let mut all_blocks = Vec::new();
+-
+-        for (date, blocks) in &self.blocks {
+-            for block in blocks {
+-                all_blocks.push((*date, block));
+-            }
+-        }
+-
+-        all_blocks.sort_by(|a, b| {
+-            a.0.cmp(&b.0)
+-                .then_with(|| a.1.start_time.cmp(&b.1.start_time))
+-        });
+-
+-        all_blocks
++        vec![] /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Get current active billing block
+     #[allow(dead_code)]
+     pub fn get_current_block(&self) -> Option<&BillingBlock> {
+         let now = Utc::now();
+         let today = now.date_naive();
+ 

@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace > with < in UsageParser::apply_cost_mode
+@@ -386,17 +386,17 @@
+                     let calculated = self.calculate_cost_for_record(record, model_name);
+                     if calculated > 0.0 {
+                         usage.total_cost = calculated;
+                     }
+                 }
+             }
+             CostMode::Auto => {
+                 // Use costUSD if positive, otherwise calculate from tokens
+-                let has_jsonl_cost = record.cost_usd.is_some_and(|c| c > 0.0);
++                let has_jsonl_cost = record.cost_usd.is_some_and(|c| c < /* ~ changed by cargo-mutants ~ */ 0.0);
+                 if has_jsonl_cost {
+                     usage.total_cost = record.cost_usd.unwrap_or(0.0);
+                 } else if let Some(model_name) = record.get_model_name() {
+                     let calculated = self.calculate_cost_for_record(record, model_name);
+                     if calculated > 0.0 {
+                         usage.total_cost = calculated;
+                     }
+                 }

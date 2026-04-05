@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace > with < in BillingBlockManager::get_blocks_with_usage
+@@ -153,17 +153,17 @@
+             .iter()
+             .find(|block| block.contains(now))
+     }
+ 
+     /// Get billing blocks with usage (non-empty blocks)
+     pub fn get_blocks_with_usage(&self) -> Vec<(NaiveDate, &BillingBlock)> {
+         self.get_all_blocks()
+             .into_iter()
+-            .filter(|(_, block)| block.usage.total_tokens() > 0)
++            .filter(|(_, block)| block.usage.total_tokens() < /* ~ changed by cargo-mutants ~ */ 0)
+             .collect()
+     }
+ 
+     /// Calculate total usage across all billing blocks
+     pub fn total_usage(&self) -> TokenUsage {
+         let mut total = TokenUsage::default();
+ 
+         for blocks in self.blocks.values() {

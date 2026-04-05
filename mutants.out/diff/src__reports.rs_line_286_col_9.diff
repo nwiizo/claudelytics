@@ -1,0 +1,26 @@
+--- src/reports.rs
++++ replace <impl Sortable for DailyUsage>::compare_by_field -> std::cmp::Ordering with Default::default()
+@@ -278,22 +278,17 @@
+ // Generic sorting traits
+ trait Sortable {
+     fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering;
+     fn default_sort_field() -> SortField;
+ }
+ 
+ impl Sortable for DailyUsage {
+     fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering {
+-        match field {
+-            SortField::Date => self.date.cmp(&other.date),
+-            SortField::Cost => compare_floats(self.total_cost, other.total_cost),
+-            SortField::Tokens => self.total_tokens.cmp(&other.total_tokens),
+-            _ => self.date.cmp(&other.date), // Default to date for unsupported fields
+-        }
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn default_sort_field() -> SortField {
+         SortField::Date
+     }
+ }
+ 
+ impl Sortable for SessionUsage {

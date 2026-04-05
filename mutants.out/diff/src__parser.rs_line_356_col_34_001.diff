@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace * with / in UsageParser::calculate_cost_for_record
+@@ -348,17 +348,17 @@
+                 usage.input_tokens,
+                 usage.output_tokens,
+                 usage.cache_creation_input_tokens,
+                 usage.cache_read_input_tokens,
+             );
+ 
+             // Apply fast mode multiplier if speed is "fast"
+             if usage.is_fast_mode() {
+-                return base_cost * FAST_MODE_MULTIPLIER;
++                return base_cost / /* ~ changed by cargo-mutants ~ */ FAST_MODE_MULTIPLIER;
+             }
+ 
+             return base_cost;
+         }
+ 
+         0.0
+     }
+ 

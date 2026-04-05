@@ -1,0 +1,23 @@
+--- src/billing_blocks.rs
++++ replace BillingBlockManager::peak_usage_block -> Option<(NaiveDate, &BillingBlock)> with None
+@@ -190,19 +190,17 @@
+             }
+         }
+ 
+         usage_by_time
+     }
+ 
+     /// Get peak usage billing block
+     pub fn peak_usage_block(&self) -> Option<(NaiveDate, &BillingBlock)> {
+-        self.get_blocks_with_usage()
+-            .into_iter()
+-            .max_by(|a, b| a.1.usage.total_tokens().cmp(&b.1.usage.total_tokens()))
++        None /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Calculate average usage per billing block (excluding empty blocks)
+     pub fn average_usage_per_block(&self) -> TokenUsage {
+         let blocks_with_usage = self.get_blocks_with_usage();
+         if blocks_with_usage.is_empty() {
+             return TokenUsage::default();
+         }

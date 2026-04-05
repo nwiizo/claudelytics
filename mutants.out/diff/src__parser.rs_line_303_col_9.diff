@@ -1,0 +1,51 @@
+--- src/parser.rs
++++ replace UsageParser::should_include_record -> bool with true
+@@ -295,47 +295,17 @@
+                 return Ok(components.join("/"));
+             }
+         }
+ 
+         anyhow::bail!("File path is not within any known projects directory")
+     }
+ 
+     fn should_include_record(&self, record: &UsageRecord) -> bool {
+-        let timestamp = match record.timestamp {
+-            Some(ts) => ts,
+-            None => return false,
+-        };
+-        let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+-
+-        if let Some(since) = self.since
+-            && date < since
+-        {
+-            return false;
+-        }
+-
+-        if let Some(until) = self.until
+-            && date > until
+-        {
+-            return false;
+-        }
+-
+-        // Apply model filter using ModelsRegistry
+-        if let Some(filter) = &self.model_filter {
+-            if let Some(model_name) = record.get_model_name() {
+-                if !self.models_registry.matches_filter(model_name, filter) {
+-                    return false;
+-                }
+-            } else {
+-                // No model name in record, exclude it when filter is active
+-                return false;
+-            }
+-        }
+-
+-        true
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Calculate cost for a single record from token counts and model pricing.
+     /// Returns cost with fast mode multiplier already applied if applicable.
+     fn calculate_cost_for_record(&self, record: &UsageRecord, model_name: &str) -> f64 {
+         let fallback_pricing = &self.fallback_pricing;
+ 
+         if let Some(pricing) = self

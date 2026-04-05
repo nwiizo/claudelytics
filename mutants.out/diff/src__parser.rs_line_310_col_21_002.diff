@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace < with <= in UsageParser::should_include_record
+@@ -302,17 +302,17 @@
+     fn should_include_record(&self, record: &UsageRecord) -> bool {
+         let timestamp = match record.timestamp {
+             Some(ts) => ts,
+             None => return false,
+         };
+         let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+ 
+         if let Some(since) = self.since
+-            && date < since
++            && date <= /* ~ changed by cargo-mutants ~ */ since
+         {
+             return false;
+         }
+ 
+         if let Some(until) = self.until
+             && date > until
+         {
+             return false;

@@ -1,0 +1,40 @@
+--- src/billing_blocks.rs
++++ replace BillingBlockManager::generate_report -> BillingBlockReport with Default::default()
+@@ -257,36 +257,17 @@
+             session_count: block.session_count,
+         }
+     }
+ }
+ 
+ impl BillingBlockManager {
+     /// Generate a comprehensive billing block report
+     pub fn generate_report(&self) -> BillingBlockReport {
+-        let blocks_with_usage = self.get_blocks_with_usage();
+-        let total_usage = self.total_usage();
+-        let peak_block = self
+-            .peak_usage_block()
+-            .map(|(date, block)| (date, block).into());
+-        let average_per_block = self.average_usage_per_block();
+-        let usage_by_time = self.usage_by_block_time();
+-
+-        let blocks: Vec<BillingBlockSummary> = blocks_with_usage
+-            .into_iter()
+-            .map(|(date, block)| (date, block).into())
+-            .collect();
+-
+-        BillingBlockReport {
+-            blocks,
+-            total_usage,
+-            peak_block,
+-            average_per_block,
+-            usage_by_time,
+-        }
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     use chrono::TimeZone;
+ 

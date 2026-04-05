@@ -1,0 +1,36 @@
+--- src/parser.rs
++++ replace parse_date -> Result<NaiveDate> with Ok(Default::default())
+@@ -406,32 +406,17 @@
+         // Track fast mode cost separately
+         if is_fast {
+             usage.fast_mode_cost = usage.total_cost;
+         }
+     }
+ }
+ 
+ fn parse_date(date_str: &str) -> Result<NaiveDate> {
+-    if date_str.len() != 8 {
+-        anyhow::bail!("Date must be in YYYYMMDD format");
+-    }
+-
+-    let year: i32 = date_str[0..4]
+-        .parse()
+-        .with_context(|| "Invalid year in date")?;
+-    let month: u32 = date_str[4..6]
+-        .parse()
+-        .with_context(|| "Invalid month in date")?;
+-    let day: u32 = date_str[6..8]
+-        .parse()
+-        .with_context(|| "Invalid day in date")?;
+-
+-    NaiveDate::from_ymd_opt(year, month, day)
+-        .ok_or_else(|| anyhow::anyhow!("Invalid date: {}", date_str))
++    Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     use std::fs;
+     use std::io::Write;
+     use tempfile::TempDir;

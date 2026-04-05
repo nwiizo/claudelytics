@@ -347,3 +347,130 @@ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
 
     pricing
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_pricing() -> ModelPricing {
+        ModelPricing {
+            input_cost_per_token: Some(3.0 / 1_000_000.0),
+            output_cost_per_token: Some(15.0 / 1_000_000.0),
+            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
+            cache_read_input_token_cost: Some(0.30 / 1_000_000.0),
+            input_cost_per_token_above_200k: Some(6.0 / 1_000_000.0),
+            output_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
+            cache_creation_cost_above_200k: Some(7.50 / 1_000_000.0),
+            cache_read_cost_above_200k: Some(0.60 / 1_000_000.0),
+        }
+    }
+
+    #[test]
+    fn test_flat_cost_calculation() {
+        let fetcher = PricingFetcher::new();
+        let pricing = test_pricing();
+
+        // Small context: flat pricing
+        let cost = fetcher.calculate_cost(&pricing, 1000, 500, 0, 0);
+        let expected = 1000.0 * 3.0 / 1_000_000.0 + 500.0 * 15.0 / 1_000_000.0;
+        assert!(
+            (cost - expected).abs() < 1e-10,
+            "flat cost: {cost} != {expected}"
+        );
+    }
+
+    #[test]
+    fn test_flat_cost_with_cache() {
+        let fetcher = PricingFetcher::new();
+        let pricing = test_pricing();
+
+        let cost = fetcher.calculate_cost(&pricing, 1000, 500, 2000, 5000);
+        // total_input_context = 1000 + 5000 + 2000 = 8000 < 200k, so flat
+        let expected = 1000.0 * 3.0 / 1_000_000.0
+            + 500.0 * 15.0 / 1_000_000.0
+            + 2000.0 * 3.75 / 1_000_000.0
+            + 5000.0 * 0.30 / 1_000_000.0;
+        assert!(
+            (cost - expected).abs() < 1e-10,
+            "flat cache cost: {cost} != {expected}"
+        );
+    }
+
+    #[test]
+    fn test_tiered_cost_kicks_in_above_threshold() {
+        let fetcher = PricingFetcher::new();
+        let pricing = test_pricing();
+
+        // Total context > 200k triggers tiered pricing
+        let cost_flat = fetcher.calculate_cost(&pricing, 1000, 500, 0, 0);
+        let cost_tiered = fetcher.calculate_cost(&pricing, 1000, 500, 0, 300_000);
+
+        // Tiered should be more expensive due to higher rates above 200k
+        assert!(
+            cost_tiered > cost_flat,
+            "tiered {cost_tiered} should > flat {cost_flat}"
+        );
+        assert!(cost_tiered > 0.0, "tiered cost should be positive");
+    }
+
+    #[test]
+    fn test_zero_tokens_returns_zero() {
+        let fetcher = PricingFetcher::new();
+        let pricing = test_pricing();
+        let cost = fetcher.calculate_cost(&pricing, 0, 0, 0, 0);
+        assert!((cost - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_calculate_cost_components_are_additive() {
+        let fetcher = PricingFetcher::new();
+        let pricing = test_pricing();
+
+        // Input only
+        let input_cost = fetcher.calculate_cost(&pricing, 1000, 0, 0, 0);
+        // Output only
+        let output_cost = fetcher.calculate_cost(&pricing, 0, 1000, 0, 0);
+        // Both
+        let combined = fetcher.calculate_cost(&pricing, 1000, 1000, 0, 0);
+
+        assert!(
+            (combined - (input_cost + output_cost)).abs() < 1e-10,
+            "costs should be additive: {combined} != {input_cost} + {output_cost}"
+        );
+    }
+
+    #[test]
+    fn test_get_model_pricing_direct_match() {
+        let fetcher = PricingFetcher::new();
+        let data = get_fallback_pricing();
+        let result = fetcher.get_model_pricing(&data, "claude-sonnet-4-20250514");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_get_model_pricing_alias_match() {
+        let fetcher = PricingFetcher::new();
+        let data = get_fallback_pricing();
+        // "claude-sonnet-4-6" should resolve
+        let result = fetcher.get_model_pricing(&data, "claude-sonnet-4-6");
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_get_model_pricing_unknown() {
+        let fetcher = PricingFetcher::new();
+        let data = get_fallback_pricing();
+        let result = fetcher.get_model_pricing(&data, "nonexistent-model-xyz");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fast_mode_multiplier() {
+        assert!((FAST_MODE_MULTIPLIER - 6.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_tiered_threshold() {
+        assert_eq!(TIERED_THRESHOLD, 200_000);
+    }
+}

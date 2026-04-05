@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ delete match arm 7 in generate_monthly_report_sorted
+@@ -117,17 +117,17 @@
+         .map(|((year, month), (usage, days_active))| {
+             let month_name = match month {
+                 1 => "January",
+                 2 => "February",
+                 3 => "March",
+                 4 => "April",
+                 5 => "May",
+                 6 => "June",
+-                7 => "July",
++                 /* ~ changed by cargo-mutants ~ */
+                 8 => "August",
+                 9 => "September",
+                 10 => "October",
+                 11 => "November",
+                 12 => "December",
+                 _ => "Unknown",
+             };
+ 

@@ -1,0 +1,136 @@
+--- src/pricing.rs
++++ replace get_fallback_pricing -> HashMap<String, ModelPricing> with HashMap::from_iter([("xyzzy".into(), Default::default())])
+@@ -218,132 +218,10 @@
+ 
+         total_cost
+     }
+ }
+ 
+ // Fallback pricing for common Claude models (as of 2025)
+ // Updated to match ccusage pricing methodology
+ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
+-    let mut pricing = HashMap::new();
+-
+-    // Claude Sonnet 4 - $3/$15 per MTok, above 200k: $6/$30
+-    pricing.insert(
+-        "claude-sonnet-4-20250514".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(3.0 / 1_000_000.0),
+-            output_cost_per_token: Some(15.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(0.3 / 1_000_000.0),
+-            input_cost_per_token_above_200k: Some(6.0 / 1_000_000.0),
+-            output_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
+-            cache_creation_cost_above_200k: Some(7.5 / 1_000_000.0),
+-            cache_read_cost_above_200k: Some(0.6 / 1_000_000.0),
+-        },
+-    );
+-
+-    // Claude Opus 4 - $15/$75 per MTok, above 200k: $30/$150
+-    pricing.insert(
+-        "claude-opus-4-20250514".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(15.0 / 1_000_000.0),
+-            output_cost_per_token: Some(75.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(1.5 / 1_000_000.0),
+-            input_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
+-            output_cost_per_token_above_200k: Some(150.0 / 1_000_000.0),
+-            cache_creation_cost_above_200k: Some(37.5 / 1_000_000.0),
+-            cache_read_cost_above_200k: Some(3.0 / 1_000_000.0),
+-        },
+-    );
+-
+-    // Claude 3.5 Sonnet - $3/$15 per MTok (no tiered pricing, 200k context)
+-    pricing.insert(
+-        "claude-3-5-sonnet-20241022".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(3.0 / 1_000_000.0),
+-            output_cost_per_token: Some(15.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(0.3 / 1_000_000.0),
+-            input_cost_per_token_above_200k: None,
+-            output_cost_per_token_above_200k: None,
+-            cache_creation_cost_above_200k: None,
+-            cache_read_cost_above_200k: None,
+-        },
+-    );
+-
+-    // Claude 3.5 Haiku - $0.80/$4 per MTok (no tiered pricing)
+-    pricing.insert(
+-        "claude-3-5-haiku-20241022".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(0.8 / 1_000_000.0),
+-            output_cost_per_token: Some(4.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(1.0 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(0.08 / 1_000_000.0),
+-            input_cost_per_token_above_200k: None,
+-            output_cost_per_token_above_200k: None,
+-            cache_creation_cost_above_200k: None,
+-            cache_read_cost_above_200k: None,
+-        },
+-    );
+-
+-    // Claude 3 Opus - $15/$75 per MTok (no tiered pricing, 200k context)
+-    pricing.insert(
+-        "claude-3-opus-20240229".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(15.0 / 1_000_000.0),
+-            output_cost_per_token: Some(75.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(1.5 / 1_000_000.0),
+-            input_cost_per_token_above_200k: None,
+-            output_cost_per_token_above_200k: None,
+-            cache_creation_cost_above_200k: None,
+-            cache_read_cost_above_200k: None,
+-        },
+-    );
+-
+-    // Claude Opus 4.6 - $15/$75 per MTok, above 200k: $30/$150
+-    pricing.insert(
+-        "claude-opus-4-6-20260310".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(15.0 / 1_000_000.0),
+-            output_cost_per_token: Some(75.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(1.5 / 1_000_000.0),
+-            input_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
+-            output_cost_per_token_above_200k: Some(150.0 / 1_000_000.0),
+-            cache_creation_cost_above_200k: Some(37.5 / 1_000_000.0),
+-            cache_read_cost_above_200k: Some(3.0 / 1_000_000.0),
+-        },
+-    );
+-
+-    // Claude Sonnet 4.6 - $3/$15 per MTok, above 200k: $6/$30
+-    pricing.insert(
+-        "claude-sonnet-4-6-20260310".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(3.0 / 1_000_000.0),
+-            output_cost_per_token: Some(15.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(0.3 / 1_000_000.0),
+-            input_cost_per_token_above_200k: Some(6.0 / 1_000_000.0),
+-            output_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
+-            cache_creation_cost_above_200k: Some(7.5 / 1_000_000.0),
+-            cache_read_cost_above_200k: Some(0.6 / 1_000_000.0),
+-        },
+-    );
+-
+-    // Claude Haiku 4.5 - $0.80/$4 per MTok (no tiered pricing)
+-    pricing.insert(
+-        "claude-haiku-4-5-20251001".to_string(),
+-        ModelPricing {
+-            input_cost_per_token: Some(0.8 / 1_000_000.0),
+-            output_cost_per_token: Some(4.0 / 1_000_000.0),
+-            cache_creation_input_token_cost: Some(1.0 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(0.08 / 1_000_000.0),
+-            input_cost_per_token_above_200k: None,
+-            output_cost_per_token_above_200k: None,
+-            cache_creation_cost_above_200k: None,
+-            cache_read_cost_above_200k: None,
+-        },
+-    );
+-
+-    pricing
++    HashMap::from_iter([("xyzzy".into(), Default::default())]) /* ~ changed by cargo-mutants ~ */
+ }

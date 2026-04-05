@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace += with -= in generate_session_report_sorted
+@@ -77,17 +77,17 @@
+     // Calculate totals
+     let totals = session_entries
+         .iter()
+         .fold(TokenUsage::default(), |mut acc, session| {
+             acc.input_tokens += session.input_tokens;
+             acc.output_tokens += session.output_tokens;
+             acc.cache_creation_tokens += session.cache_creation_tokens;
+             acc.cache_read_tokens += session.cache_read_tokens;
+-            acc.total_cost += session.total_cost;
++            acc.total_cost -= /* ~ changed by cargo-mutants ~ */ session.total_cost;
+             acc
+         });
+ 
+     SessionReport {
+         sessions: session_entries,
+         totals: TokenUsageTotals::from(&totals),
+     }
+ }

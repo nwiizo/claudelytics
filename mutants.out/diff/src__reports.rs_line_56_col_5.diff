@@ -1,0 +1,57 @@
+--- src/reports.rs
++++ replace generate_session_report_sorted -> SessionReport with Default::default()
+@@ -48,53 +48,17 @@
+     }
+ }
+ 
+ pub fn generate_session_report_sorted(
+     session_map: SessionUsageMap,
+     sort_field: Option<SortField>,
+     sort_order: Option<SortOrder>,
+ ) -> SessionReport {
+-    let mut session_entries: Vec<SessionUsage> = session_map
+-        .into_iter()
+-        .map(|(session_path, (usage, last_activity))| {
+-            let (project_path, session_id) = parse_session_path(&session_path);
+-            SessionUsage {
+-                project_path,
+-                session_id,
+-                input_tokens: usage.input_tokens,
+-                output_tokens: usage.output_tokens,
+-                cache_creation_tokens: usage.cache_creation_tokens,
+-                cache_read_tokens: usage.cache_read_tokens,
+-                total_tokens: usage.total_tokens(),
+-                total_cost: usage.total_cost,
+-                last_activity: last_activity.date_naive().format("%Y-%m-%d").to_string(),
+-            }
+-        })
+-        .collect();
+-
+-    // Apply sorting
+-    sort_session_entries(&mut session_entries, sort_field, sort_order);
+-
+-    // Calculate totals
+-    let totals = session_entries
+-        .iter()
+-        .fold(TokenUsage::default(), |mut acc, session| {
+-            acc.input_tokens += session.input_tokens;
+-            acc.output_tokens += session.output_tokens;
+-            acc.cache_creation_tokens += session.cache_creation_tokens;
+-            acc.cache_read_tokens += session.cache_read_tokens;
+-            acc.total_cost += session.total_cost;
+-            acc
+-        });
+-
+-    SessionReport {
+-        sessions: session_entries,
+-        totals: TokenUsageTotals::from(&totals),
+-    }
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ pub fn generate_monthly_report_sorted(
+     daily_map: DailyUsageMap,
+     sort_field: Option<SortField>,
+     sort_order: Option<SortOrder>,
+ ) -> MonthlyReport {
+     // Group by year-month

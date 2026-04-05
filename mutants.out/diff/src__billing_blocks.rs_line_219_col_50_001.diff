@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace / with * in BillingBlockManager::average_usage_per_block
+@@ -211,17 +211,17 @@
+         let count = blocks_with_usage.len() as f64;
+ 
+         TokenUsage {
+             input_tokens: (total.input_tokens as f64 / count) as u64,
+             output_tokens: (total.output_tokens as f64 / count) as u64,
+             cache_creation_tokens: (total.cache_creation_tokens as f64 / count) as u64,
+             cache_read_tokens: (total.cache_read_tokens as f64 / count) as u64,
+             total_cost: total.total_cost / count,
+-            fast_mode_cost: total.fast_mode_cost / count,
++            fast_mode_cost: total.fast_mode_cost * /* ~ changed by cargo-mutants ~ */ count,
+         }
+     }
+ }
+ 
+ #[derive(Debug, Serialize)]
+ pub struct BillingBlockReport {
+     /// Summary of all billing blocks
+     pub blocks: Vec<BillingBlockSummary>,

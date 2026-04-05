@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace > with >= in UsageParser::new_multi
+@@ -59,17 +59,17 @@
+         until: Option<String>,
+         model_filter: Option<String>,
+         cost_mode: CostMode,
+     ) -> Result<Self> {
+         let since = since.map(|s| parse_date(&s)).transpose()?;
+         let until = until.map(|s| parse_date(&s)).transpose()?;
+ 
+         if let (Some(since), Some(until)) = (since, until)
+-            && since > until
++            && since >= /* ~ changed by cargo-mutants ~ */ until
+         {
+             anyhow::bail!("Since date must be before or equal to until date");
+         }
+ 
+         Ok(UsageParser {
+             claude_dirs,
+             since,
+             until,

@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace * with + in BillingBlockManager::add_usage
+@@ -92,17 +92,17 @@
+         let date = timestamp.date_naive();
+         let _block_start = BillingBlock::normalize_to_block_start(timestamp);
+ 
+         // Ensure we have blocks for this date
+         let day_blocks = self.blocks.entry(date).or_insert_with(|| {
+             let mut blocks = Vec::new();
+             for i in 0..5 {
+                 let start = date
+-                    .and_hms_opt(i * BILLING_BLOCK_HOURS as u32, 0, 0)
++                    .and_hms_opt(i + /* ~ changed by cargo-mutants ~ */ BILLING_BLOCK_HOURS as u32, 0, 0)
+                     .unwrap()
+                     .and_local_timezone(Utc)
+                     .unwrap();
+                 blocks.push(BillingBlock::new(start));
+             }
+             blocks
+         });
+ 

@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace == with != in UsageParser::find_jsonl_files
+@@ -158,17 +158,17 @@
+                 .into_iter()
+                 .filter_map(|entry| entry.ok())
+                 .filter(|entry| entry.file_type().is_file())
+                 .filter(|entry| {
+                     entry
+                         .path()
+                         .extension()
+                         .and_then(|ext| ext.to_str())
+-                        .map(|ext| ext == "jsonl")
++                        .map(|ext| ext != /* ~ changed by cargo-mutants ~ */ "jsonl")
+                         .unwrap_or(false)
+                 })
+                 .map(|entry| entry.path().to_path_buf())
+                 .collect();
+ 
+             all_files.extend(files);
+         }
+ 

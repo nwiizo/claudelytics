@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace BillingBlock::contains -> bool with false
+@@ -43,17 +43,17 @@
+             .and_hms_opt(block_hour as u32, 0, 0)
+             .unwrap()
+             .and_local_timezone(Utc)
+             .unwrap()
+     }
+ 
+     /// Check if a timestamp falls within this billing block
+     pub fn contains(&self, time: DateTime<Utc>) -> bool {
+-        time >= self.start_time && time < self.end_time
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Get a human-readable label for this block (e.g., "00:00-05:00")
+     pub fn label(&self) -> String {
+         format!(
+             "{:02}:00-{:02}:00",
+             self.start_time.hour(),
+             self.end_time.hour()

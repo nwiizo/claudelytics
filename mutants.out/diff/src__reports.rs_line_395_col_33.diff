@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace - with + in parse_session_path
+@@ -387,17 +387,17 @@
+ ) {
+     sort_entries(entries, sort_field, sort_order);
+ }
+ 
+ fn parse_session_path(session_path: &str) -> (String, String) {
+     let parts: Vec<&str> = session_path.split('/').collect();
+     if let Some(session_id) = parts.last() {
+         let project_path = if parts.len() > 1 {
+-            parts[..parts.len() - 1].join("/")
++            parts[..parts.len() + /* ~ changed by cargo-mutants ~ */ 1].join("/")
+         } else {
+             "".to_string()
+         };
+         (project_path, session_id.to_string())
+     } else {
+         ("".to_string(), session_path.to_string())
+     }
+ }

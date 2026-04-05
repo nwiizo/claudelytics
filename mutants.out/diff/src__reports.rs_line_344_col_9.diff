@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace <impl Sortable for MonthlyUsage>::default_sort_field -> SortField with Default::default()
+@@ -336,17 +336,17 @@
+                     std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
+                     other => other,
+                 }
+             } // Default to date
+         }
+     }
+ 
+     fn default_sort_field() -> SortField {
+-        SortField::Date
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ // Generic sort function
+ fn sort_entries<T: Sortable>(
+     entries: &mut [T],
+     sort_field: Option<SortField>,
+     sort_order: Option<SortOrder>,

@@ -1,0 +1,27 @@
+--- src/billing_blocks.rs
++++ replace BillingBlockManager::get_current_block -> Option<&BillingBlock> with Some(Box::leak(Box::new(Default::default())))
+@@ -140,23 +140,17 @@
+         });
+ 
+         all_blocks
+     }
+ 
+     /// Get current active billing block
+     #[allow(dead_code)]
+     pub fn get_current_block(&self) -> Option<&BillingBlock> {
+-        let now = Utc::now();
+-        let today = now.date_naive();
+-
+-        self.blocks
+-            .get(&today)?
+-            .iter()
+-            .find(|block| block.contains(now))
++        Some(Box::leak(Box::new(Default::default()))) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Get billing blocks with usage (non-empty blocks)
+     pub fn get_blocks_with_usage(&self) -> Vec<(NaiveDate, &BillingBlock)> {
+         self.get_all_blocks()
+             .into_iter()
+             .filter(|(_, block)| block.usage.total_tokens() > 0)
+             .collect()

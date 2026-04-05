@@ -1,0 +1,21 @@
+--- src/pricing.rs
++++ replace - with / in PricingFetcher::calculate_tiered_cost
+@@ -159,17 +159,17 @@
+         input_tokens: u64,
+         output_tokens: u64,
+         cache_creation_tokens: u64,
+         cache_read_tokens: u64,
+         total_input_context: u64,
+     ) -> f64 {
+         // Ratio of tokens below/above the threshold
+         let below_ratio = TIERED_THRESHOLD as f64 / total_input_context as f64;
+-        let above_ratio = 1.0 - below_ratio;
++        let above_ratio = 1.0 / /* ~ changed by cargo-mutants ~ */ below_ratio;
+ 
+         let mut total_cost = 0.0;
+ 
+         // Input tokens: split proportionally
+         if let (Some(base), Some(tiered)) = (
+             pricing.input_cost_per_token,
+             pricing.input_cost_per_token_above_200k,
+         ) {

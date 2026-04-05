@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace BillingBlockManager::get_blocks_for_date -> Option<&Vec<BillingBlock>> with Some(Box::leak(Box::new(vec![])))
+@@ -116,17 +116,17 @@
+                 break;
+             }
+         }
+     }
+ 
+     /// Get billing blocks for a specific date
+     #[allow(dead_code)]
+     pub fn get_blocks_for_date(&self, date: NaiveDate) -> Option<&Vec<BillingBlock>> {
+-        self.blocks.get(&date)
++        Some(Box::leak(Box::new(vec![]))) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Get all billing blocks sorted by date and block index
+     pub fn get_all_blocks(&self) -> Vec<(NaiveDate, &BillingBlock)> {
+         let mut all_blocks = Vec::new();
+ 
+         for (date, blocks) in &self.blocks {
+             for block in blocks {

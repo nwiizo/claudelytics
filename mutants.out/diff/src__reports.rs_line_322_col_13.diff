@@ -1,0 +1,28 @@
+--- src/reports.rs
++++ delete match arm SortField::Date in <impl Sortable for MonthlyUsage>::compare_by_field
+@@ -314,24 +314,17 @@
+     fn default_sort_field() -> SortField {
+         SortField::Cost
+     }
+ }
+ 
+ impl Sortable for MonthlyUsage {
+     fn compare_by_field(&self, other: &Self, field: SortField) -> std::cmp::Ordering {
+         match field {
+-            SortField::Date => {
+-                let month_num_a = month_to_num(&self.month);
+-                let month_num_b = month_to_num(&other.month);
+-                match self.year.cmp(&other.year) {
+-                    std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
+-                    other => other,
+-                }
+-            }
++             /* ~ changed by cargo-mutants ~ */
+             SortField::Cost => compare_floats(self.total_cost, other.total_cost),
+             SortField::Tokens => self.total_tokens.cmp(&other.total_tokens),
+             _ => {
+                 let month_num_a = month_to_num(&self.month);
+                 let month_num_b = month_to_num(&other.month);
+                 match self.year.cmp(&other.year) {
+                     std::cmp::Ordering::Equal => month_num_a.cmp(&month_num_b),
+                     other => other,

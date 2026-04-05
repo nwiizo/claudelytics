@@ -1,0 +1,21 @@
+--- src/pricing.rs
++++ replace * with + in PricingFetcher::calculate_flat_cost
+@@ -139,17 +139,17 @@
+ 
+         if let Some(input_cost) = pricing.input_cost_per_token {
+             total_cost += input_tokens as f64 * input_cost;
+         }
+         if let Some(output_cost) = pricing.output_cost_per_token {
+             total_cost += output_tokens as f64 * output_cost;
+         }
+         if let Some(cache_creation_cost) = pricing.cache_creation_input_token_cost {
+-            total_cost += cache_creation_tokens as f64 * cache_creation_cost;
++            total_cost += cache_creation_tokens as f64 + /* ~ changed by cargo-mutants ~ */ cache_creation_cost;
+         }
+         if let Some(cache_read_cost) = pricing.cache_read_input_token_cost {
+             total_cost += cache_read_tokens as f64 * cache_read_cost;
+         }
+ 
+         total_cost
+     }
+ 

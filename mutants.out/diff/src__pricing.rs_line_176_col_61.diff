@@ -1,0 +1,21 @@
+--- src/pricing.rs
++++ replace * with + in PricingFetcher::calculate_tiered_cost
+@@ -168,17 +168,17 @@
+ 
+         let mut total_cost = 0.0;
+ 
+         // Input tokens: split proportionally
+         if let (Some(base), Some(tiered)) = (
+             pricing.input_cost_per_token,
+             pricing.input_cost_per_token_above_200k,
+         ) {
+-            let below = (input_tokens as f64 * below_ratio) * base;
++            let below = (input_tokens as f64 * below_ratio) + /* ~ changed by cargo-mutants ~ */ base;
+             let above = (input_tokens as f64 * above_ratio) * tiered;
+             total_cost += below + above;
+         } else if let Some(base) = pricing.input_cost_per_token {
+             total_cost += input_tokens as f64 * base;
+         }
+ 
+         // Output tokens: split proportionally like input tokens
+         if let (Some(base), Some(tiered)) = (

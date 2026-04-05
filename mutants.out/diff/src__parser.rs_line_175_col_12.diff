@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ delete ! in UsageParser::find_jsonl_files
+@@ -167,17 +167,17 @@
+                         .unwrap_or(false)
+                 })
+                 .map(|entry| entry.path().to_path_buf())
+                 .collect();
+ 
+             all_files.extend(files);
+         }
+ 
+-        if !found_any_dir {
++        if  /* ~ changed by cargo-mutants ~ */found_any_dir {
+             let dir_list: Vec<String> = self
+                 .claude_dirs
+                 .iter()
+                 .map(|d| d.display().to_string())
+                 .collect();
+             eprintln!(
+                 "Warning: No Claude projects directory found in: {}",
+                 dir_list.join(", ")

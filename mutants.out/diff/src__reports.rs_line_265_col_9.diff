@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ delete match arm "April" in month_to_num
+@@ -257,17 +257,17 @@
+     date - Duration::days(days_since_start)
+ }
+ 
+ fn month_to_num(month: &str) -> u32 {
+     match month {
+         "January" => 1,
+         "February" => 2,
+         "March" => 3,
+-        "April" => 4,
++         /* ~ changed by cargo-mutants ~ */
+         "May" => 5,
+         "June" => 6,
+         "July" => 7,
+         "August" => 8,
+         "September" => 9,
+         "October" => 10,
+         "November" => 11,
+         "December" => 12,

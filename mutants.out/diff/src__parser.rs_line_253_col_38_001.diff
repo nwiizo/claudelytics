@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace > with < in UsageParser::parse_file_with_billing
+@@ -245,17 +245,17 @@
+                             .or_insert_with(TokenUsage::default)
+                             .add(&usage);
+ 
+                         // Add to session map
+                         let session_entry = session_map
+                             .entry(session_info.clone())
+                             .or_insert((TokenUsage::default(), timestamp));
+                         session_entry.0.add(&usage);
+-                        if timestamp > session_entry.1 {
++                        if timestamp < /* ~ changed by cargo-mutants ~ */ session_entry.1 {
+                             session_entry.1 = timestamp;
+                         }
+ 
+                         // Add to billing blocks
+                         if let Ok(mut manager) = billing_manager.lock() {
+                             manager.add_usage(timestamp, &usage, Some(&session_info));
+                         }
+                     }

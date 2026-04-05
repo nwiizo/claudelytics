@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace && with || in UsageParser::parse_file_with_billing
+@@ -224,17 +224,17 @@
+ 
+                     // Skip records without timestamp or usage data
+                     if let Some(timestamp) = record.timestamp
+                         && record
+                             .message
+                             .as_ref()
+                             .and_then(|m| m.usage.as_ref())
+                             .is_some()
+-                        && self.should_include_record(&record)
++                        || /* ~ changed by cargo-mutants ~ */ self.should_include_record(&record)
+                     {
+                         let mut usage = TokenUsage::from(&record);
+                         let is_fast = Self::is_fast_mode_record(&record);
+ 
+                         // Calculate cost based on cost mode
+                         self.apply_cost_mode(&mut usage, &record, is_fast);
+ 
+                         let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();

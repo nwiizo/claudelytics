@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ delete match arm "August" in month_to_num
+@@ -261,17 +261,17 @@
+     match month {
+         "January" => 1,
+         "February" => 2,
+         "March" => 3,
+         "April" => 4,
+         "May" => 5,
+         "June" => 6,
+         "July" => 7,
+-        "August" => 8,
++         /* ~ changed by cargo-mutants ~ */
+         "September" => 9,
+         "October" => 10,
+         "November" => 11,
+         "December" => 12,
+         _ => 0,
+     }
+ }
+ 

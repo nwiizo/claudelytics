@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace > with == in generate_weekly_report_sorted
+@@ -195,17 +195,17 @@
+                 week_end: week_end.format("%Y-%m-%d").to_string(),
+                 input_tokens: usage.input_tokens,
+                 output_tokens: usage.output_tokens,
+                 cache_creation_tokens: usage.cache_creation_tokens,
+                 cache_read_tokens: usage.cache_read_tokens,
+                 total_tokens: usage.total_tokens(),
+                 total_cost: usage.total_cost,
+                 days_active,
+-                avg_daily_cost: if days_active > 0 {
++                avg_daily_cost: if days_active == /* ~ changed by cargo-mutants ~ */ 0 {
+                     usage.total_cost / days_active as f64
+                 } else {
+                     0.0
+                 },
+             }
+         })
+         .collect();
+ 

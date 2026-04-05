@@ -1,0 +1,21 @@
+--- src/main.rs
++++ replace - with + in run
+@@ -1016,17 +1016,17 @@
+     };
+ 
+     // Handle date shortcut flags: today > last_7d > last_30d > explicit
+     let (since_date, until_date) = if cli.today {
+         let today = Local::now().date_naive().format("%Y%m%d").to_string();
+         (Some(today.clone()), Some(today))
+     } else if cli.last_7d {
+         let today = Local::now().date_naive();
+-        let since = (today - chrono::Duration::days(6))
++        let since = (today + /* ~ changed by cargo-mutants ~ */ chrono::Duration::days(6))
+             .format("%Y%m%d")
+             .to_string();
+         let until = today.format("%Y%m%d").to_string();
+         (Some(since), Some(until))
+     } else if cli.last_30d {
+         let today = Local::now().date_naive();
+         let since = (today - chrono::Duration::days(29))
+             .format("%Y%m%d")

@@ -1,0 +1,21 @@
+--- src/billing_blocks.rs
++++ replace / with % in BillingBlock::block_index
+@@ -58,17 +58,17 @@
+             self.start_time.hour(),
+             self.end_time.hour()
+         )
+     }
+ 
+     /// Get the block index for the day (0-4)
+     #[allow(dead_code)]
+     pub fn block_index(&self) -> usize {
+-        (self.start_time.hour() as usize) / (BILLING_BLOCK_HOURS as usize)
++        (self.start_time.hour() as usize) % /* ~ changed by cargo-mutants ~ */ (BILLING_BLOCK_HOURS as usize)
+     }
+ }
+ 
+ /// Manages billing blocks and aggregates usage data
+ #[derive(Debug, Clone, Default)]
+ pub struct BillingBlockManager {
+     /// Map of date to billing blocks for that day
+     blocks: HashMap<NaiveDate, Vec<BillingBlock>>,

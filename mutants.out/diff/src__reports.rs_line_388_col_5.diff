@@ -1,0 +1,21 @@
+--- src/reports.rs
++++ replace sort_monthly_entries with ()
+@@ -380,17 +380,17 @@
+     sort_entries(entries, sort_field, sort_order);
+ }
+ 
+ fn sort_monthly_entries(
+     entries: &mut [MonthlyUsage],
+     sort_field: Option<SortField>,
+     sort_order: Option<SortOrder>,
+ ) {
+-    sort_entries(entries, sort_field, sort_order);
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn parse_session_path(session_path: &str) -> (String, String) {
+     let parts: Vec<&str> = session_path.split('/').collect();
+     if let Some(session_id) = parts.last() {
+         let project_path = if parts.len() > 1 {
+             parts[..parts.len() - 1].join("/")
+         } else {

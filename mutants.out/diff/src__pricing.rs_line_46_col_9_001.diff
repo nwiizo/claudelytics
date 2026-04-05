@@ -1,0 +1,70 @@
+--- src/pricing.rs
++++ replace PricingFetcher::get_model_pricing -> Option<ModelPricing> with Some(Default::default())
+@@ -38,66 +38,17 @@
+     }
+ 
+     pub fn get_model_pricing(
+         &self,
+         pricing_data: &HashMap<String, ModelPricing>,
+         model_name: &str,
+     ) -> Option<ModelPricing> {
+         // Direct match first
+-        if let Some(pricing) = pricing_data.get(model_name) {
+-            return Some(pricing.clone());
+-        }
+-
+-        // Try variations for Claude models
+-        let claude_variations = [
+-            // Exact model name variations
+-            model_name.to_string(),
+-            format!("claude-3-5-{}", model_name.trim_start_matches("claude-")),
+-            format!("claude-3-{}", model_name.trim_start_matches("claude-")),
+-            format!("claude-{}", model_name.trim_start_matches("claude-")),
+-            model_name.replace("claude-", ""),
+-            // Handle specific model mappings
+-            if model_name.contains("sonnet-4-6") || model_name.contains("sonnet-4.6") {
+-                "claude-sonnet-4-6-20260310".to_string()
+-            } else if model_name.contains("sonnet-4") {
+-                "claude-sonnet-4-20250514".to_string()
+-            } else {
+-                String::new()
+-            },
+-            if model_name.contains("opus-4-6") || model_name.contains("opus-4.6") {
+-                "claude-opus-4-6-20260310".to_string()
+-            } else if model_name.contains("opus-4") {
+-                "claude-opus-4-20250514".to_string()
+-            } else {
+-                String::new()
+-            },
+-            if model_name.contains("haiku-4-5") || model_name.contains("haiku-4.5") {
+-                "claude-haiku-4-5-20251001".to_string()
+-            } else {
+-                String::new()
+-            },
+-        ];
+-
+-        for variation in &claude_variations {
+-            if !variation.is_empty()
+-                && let Some(pricing) = pricing_data.get(variation)
+-            {
+-                return Some(pricing.clone());
+-            }
+-        }
+-
+-        // Partial match as fallback
+-        for (key, pricing) in pricing_data {
+-            if key.contains(model_name) || model_name.contains(key) {
+-                return Some(pricing.clone());
+-            }
+-        }
+-
+-        None
++        Some(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     pub fn calculate_cost(
+         &self,
+         pricing: &ModelPricing,
+         input_tokens: u64,
+         output_tokens: u64,
+         cache_creation_tokens: u64,

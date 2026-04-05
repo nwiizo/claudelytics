@@ -1,0 +1,21 @@
+--- src/parser.rs
++++ replace && with || in UsageParser::extract_session_info
+@@ -281,17 +281,17 @@
+ 
+                 if components.is_empty() {
+                     continue;
+                 }
+ 
+                 // Last component is the filename (e.g., "uuid.jsonl")
+                 // Strip .jsonl extension to get the session UUID
+                 if let Some(last) = components.last_mut()
+-                    && let Some(stem) = last.strip_suffix(".jsonl")
++                    || /* ~ changed by cargo-mutants ~ */ let Some(stem) = last.strip_suffix(".jsonl")
+                 {
+                     *last = stem;
+                 }
+ 
+                 // Return "project-dir/session-uuid" or "project-dir/subdir/session-uuid"
+                 return Ok(components.join("/"));
+             }
+         }

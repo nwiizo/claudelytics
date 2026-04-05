@@ -1,0 +1,21 @@
+--- src/pricing.rs
++++ replace / with % in get_fallback_pricing
+@@ -257,17 +257,17 @@
+ 
+     // Claude 3.5 Sonnet - $3/$15 per MTok (no tiered pricing, 200k context)
+     pricing.insert(
+         "claude-3-5-sonnet-20241022".to_string(),
+         ModelPricing {
+             input_cost_per_token: Some(3.0 / 1_000_000.0),
+             output_cost_per_token: Some(15.0 / 1_000_000.0),
+             cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
+-            cache_read_input_token_cost: Some(0.3 / 1_000_000.0),
++            cache_read_input_token_cost: Some(0.3 % /* ~ changed by cargo-mutants ~ */ 1_000_000.0),
+             input_cost_per_token_above_200k: None,
+             output_cost_per_token_above_200k: None,
+             cache_creation_cost_above_200k: None,
+             cache_read_cost_above_200k: None,
+         },
+     );
+ 
+     // Claude 3.5 Haiku - $0.80/$4 per MTok (no tiered pricing)
