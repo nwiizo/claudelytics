@@ -126,3 +126,5 @@ $RECYCLE.BIN/
 .directory
 .Trash-*
 .nfs*ccusage/
+mutants.out/
+mutants.out.old/
