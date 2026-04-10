@@ -496,6 +496,8 @@ pub struct CacheStatsOutput {
     pub hit_pct: f64,
     pub churn_tokens_per_turn: Option<u64>,
     pub turn_count: usize,
+    pub total_tokens: u64,
+    pub cache_read_tokens: u64,
 }
 
 pub fn compute_session_cache_stats(file_path: &Path, window: usize) -> CacheStatsOutput {
@@ -513,6 +515,8 @@ pub fn compute_session_cache_stats(file_path: &Path, window: usize) -> CacheStat
                 hit_pct: 0.0,
                 churn_tokens_per_turn: None,
                 turn_count: 0,
+                total_tokens: 0,
+                cache_read_tokens: 0,
             };
         }
     };
@@ -605,6 +609,8 @@ pub fn compute_session_cache_stats(file_path: &Path, window: usize) -> CacheStat
         hit_pct,
         churn_tokens_per_turn,
         turn_count,
+        total_tokens: total,
+        cache_read_tokens: total_read,
     }
 }
 

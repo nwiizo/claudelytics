@@ -2935,6 +2935,8 @@ fn handle_cache_stats_command(claude_dirs: &[PathBuf], session_id: &str, json: b
         } else {
             println!("Churn:     n/a (fewer than 5 turns)");
         }
+        println!("Total tokens:       {}", output.total_tokens);
+        println!("Cache read tokens:  {}", output.cache_read_tokens);
     }
 
     Ok(())
