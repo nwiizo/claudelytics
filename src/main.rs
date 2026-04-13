@@ -40,7 +40,7 @@ mod tui_visuals;
 
 // Core dependencies
 use anyhow::Result;
-use chrono::Local;
+use chrono::{Local, Timelike};
 use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use display::{
@@ -885,6 +885,18 @@ enum Commands {
         )]
         output: Option<PathBuf>,
     },
+    #[command(about = "Show today's budget pacing and burn rate")]
+    #[command(
+        long_about = "Show daily budget pacing metrics for today\n\nComputes today's spend, burn rate per hour, and hours remaining\nbefore the budget is exhausted.\n\nEXAMPLES:\n  claudelytics budget-status --budget 5.0          # Human-readable pacing\n  claudelytics --json budget-status --budget 5.0   # JSON output"
+    )]
+    BudgetStatus {
+        #[arg(
+            long,
+            help = "Daily budget in USD",
+            long_help = "Daily budget in USD to pace against\nExample: --budget 5.0"
+        )]
+        budget: f64,
+    },
     #[command(about = "Inspect session details and metadata", hide = true)]
     #[command(
         long_about = "Inspect detailed session information including metadata and statistics\n\nProvides comprehensive information about sessions including:\n  - Session metadata (ID, project, timestamps)\n  - Token usage breakdown by model\n  - Cost analysis and efficiency metrics\n  - Conversation count and structure\n  - Activity timeline\n\nEXAMPLES:\n  claudelytics inspect abc123           # Inspect specific session\n  claudelytics inspect --project myproj # Inspect sessions from project\n  claudelytics inspect --recent         # Inspect recent sessions\n  claudelytics inspect --json           # Output as JSON"
@@ -932,6 +944,14 @@ enum Commands {
             long_help = "Display timeline of session activity"
         )]
         timeline: bool,
+    },
+    #[command(about = "Show cache efficiency metrics for a single session")]
+    #[command(
+        long_about = "Show cache efficiency metrics for a single session\n\nOutputs cold%, hit%, windowed churn rate (last 5 turns), and turn count.\n\nEXAMPLES:\n  claudelytics cache-stats --session-id <uuid>        # Human-readable output\n  claudelytics --json cache-stats --session-id <uuid> # JSON output"
+    )]
+    CacheStats {
+        #[arg(long, help = "Session ID (JSONL filename stem)")]
+        session_id: String,
     },
 }
 
@@ -1063,18 +1083,38 @@ fn run() -> Result<()> {
 
     // Create parser with all discovered directories
     let parser = UsageParser::new_multi(
-        claude_dirs,
+        claude_dirs.clone(),
         since_date.clone(),
         until_date.clone(),
         cli.model_filter.clone(),
         cli.cost_mode.into(),
     )?;
 
+    // Cache stats reads a single session file directly and should not depend on
+    // aggregated usage matching the current global filters.
+    if let Some(Commands::CacheStats { session_id }) = &cli.command {
+        return handle_cache_stats_command(&claude_dirs, session_id, cli.json);
+    }
     // Parse all usage data
     let (daily_map, session_map, billing_manager) = parser.parse_all()?;
 
     // Check if we have any data
     if daily_map.is_empty() && session_map.is_empty() {
+        if let Some(Commands::BudgetStatus { budget }) = &cli.command {
+            let empty_daily_report = crate::models::DailyReport {
+                daily: Vec::new(),
+                totals: crate::models::TokenUsageTotals {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 0,
+                    total_tokens: 0,
+                    total_cost: 0.0,
+                },
+            };
+            return handle_budget_status_command(&empty_daily_report, *budget, cli.json);
+        }
+
         print_warning("No usage data found for the specified criteria");
         return Ok(());
     }
@@ -1554,10 +1594,75 @@ fn run() -> Result<()> {
                 timeline,
             )?;
         }
+        Commands::BudgetStatus { budget } => {
+            handle_budget_status_command(&daily_report, budget, cli.json)?;
+        }
         _ => {} // Other commands handled above
     }
 
     Ok(())
+}
+
+#[derive(Debug, serde::Serialize)]
+struct BudgetStatusOutput {
+    today_cost: f64,
+    burn_rate_per_hour: f64,
+    hours_remaining: Option<f64>,
+    over_budget: bool,
+}
+
+fn handle_budget_status_command(
+    daily_report: &crate::models::DailyReport,
+    budget: f64,
+    json: bool,
+) -> Result<()> {
+    let now = Local::now();
+    let today = now.date_naive().format("%Y-%m-%d").to_string();
+    let today_cost = daily_report
+        .daily
+        .iter()
+        .find(|d| d.date == today)
+        .map(|d| d.total_cost)
+        .unwrap_or(0.0);
+
+    let hours_elapsed = now.time().num_seconds_from_midnight() as f64 / 3600.0;
+    let rate = today_cost / hours_elapsed.max(0.1);
+    let hours_remaining = if rate > 0.0 && !output_over_budget(today_cost, budget) {
+        Some((budget - today_cost) / rate)
+    } else {
+        None
+    };
+
+    let output = BudgetStatusOutput {
+        today_cost,
+        burn_rate_per_hour: rate,
+        hours_remaining,
+        over_budget: output_over_budget(today_cost, budget),
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("Budget Status");
+        println!("Today's cost:    ${:.4}", output.today_cost);
+        println!("Burn rate:       ${:.4}/hr", output.burn_rate_per_hour);
+        if output.over_budget {
+            println!(
+                "Status:          OVER BUDGET (${:.4} over)",
+                today_cost - budget
+            );
+        } else if let Some(hours_remaining) = output.hours_remaining {
+            println!("Hours remaining: {:.1}h at current rate", hours_remaining);
+        } else {
+            println!("Hours remaining: n/a (no spend yet today)");
+        }
+    }
+
+    Ok(())
+}
+
+fn output_over_budget(today_cost: f64, budget: f64) -> bool {
+    today_cost > budget
 }
 
 /// Convert CLI SortField to report SortField
@@ -2729,6 +2834,49 @@ fn handle_cache_command(
         min_hit,
         min_churn,
     );
+    Ok(())
+}
+
+fn handle_cache_stats_command(claude_dirs: &[PathBuf], session_id: &str, json: bool) -> Result<()> {
+    let filename = format!("{}.jsonl", session_id);
+    // Sessions live at <claude_dir>/projects/<project-dir>/<session-id>.jsonl.
+    // Check each project subdir directly instead of walking all files.
+    let file_path = claude_dirs
+        .iter()
+        .map(|d| d.join("projects"))
+        .filter(|p| p.is_dir())
+        .flat_map(|projects_dir| {
+            std::fs::read_dir(projects_dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| e.path().join(&filename))
+        })
+        .find(|p| p.is_file());
+
+    let file_path = match file_path {
+        Some(p) => p,
+        None => anyhow::bail!("Session not found: {}", session_id),
+    };
+
+    let output = cache_analysis::compute_session_cache_stats(&file_path, 5);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else {
+        println!("Session: {}", session_id);
+        println!("Turn count: {}", output.turn_count);
+        println!("Cold %:    {:.1}%", output.cold_pct * 100.0);
+        println!("Hit %:     {:.1}%", output.hit_pct * 100.0);
+        if let Some(churn) = output.churn_tokens_per_turn {
+            println!("Churn:     {} tokens/turn (last 5 turns)", churn);
+        } else {
+            println!("Churn:     n/a (fewer than 5 turns)");
+        }
+        println!("Total tokens:       {}", output.total_tokens);
+        println!("Cache read tokens:  {}", output.cache_read_tokens);
+    }
+
     Ok(())
 }
 
