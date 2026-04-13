@@ -1124,11 +1124,32 @@ fn run() -> Result<()> {
         return watcher.watch(&claude_dir);
     }
 
+    // Cache stats reads a single session file directly and should not depend on
+    // aggregated usage matching the current global filters.
+    if let Some(Commands::CacheStats { session_id }) = &cli.command {
+        return handle_cache_stats_command(&claude_dirs, session_id, cli.json);
+    }
+
     // Parse all usage data
     let (daily_map, session_map, billing_manager) = parser.parse_all()?;
 
     // Check if we have any data
     if daily_map.is_empty() && session_map.is_empty() {
+        if let Some(Commands::BudgetStatus { budget }) = &cli.command {
+            let empty_daily_report = crate::models::DailyReport {
+                daily: Vec::new(),
+                totals: crate::models::TokenUsageTotals {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 0,
+                    total_tokens: 0,
+                    total_cost: 0.0,
+                },
+            };
+            return handle_budget_status_command(&empty_daily_report, *budget, cli.json);
+        }
+
         print_warning("No usage data found for the specified criteria");
         return Ok(());
     }
@@ -1640,9 +1661,6 @@ fn run() -> Result<()> {
                 timeline,
             )?;
         }
-        Commands::CacheStats { session_id } => {
-            handle_cache_stats_command(&claude_dirs, &session_id, cli.json)?;
-        }
         Commands::BudgetStatus { budget } => {
             handle_budget_status_command(&daily_report, budget, cli.json)?;
         }
@@ -1656,7 +1674,7 @@ fn run() -> Result<()> {
 struct BudgetStatusOutput {
     today_cost: f64,
     burn_rate_per_hour: f64,
-    hours_remaining: f64,
+    hours_remaining: Option<f64>,
     over_budget: bool,
 }
 
@@ -1676,13 +1694,17 @@ fn handle_budget_status_command(
 
     let hours_elapsed = now.time().num_seconds_from_midnight() as f64 / 3600.0;
     let rate = today_cost / hours_elapsed.max(0.1);
-    let hours_remaining = (budget - today_cost) / rate.max(f64::EPSILON);
+    let hours_remaining = if rate > 0.0 && !output_over_budget(today_cost, budget) {
+        Some((budget - today_cost) / rate)
+    } else {
+        None
+    };
 
     let output = BudgetStatusOutput {
         today_cost,
         burn_rate_per_hour: rate,
         hours_remaining,
-        over_budget: today_cost > budget,
+        over_budget: output_over_budget(today_cost, budget),
     };
 
     if json {
@@ -1696,15 +1718,18 @@ fn handle_budget_status_command(
                 "Status:          OVER BUDGET (${:.4} over)",
                 today_cost - budget
             );
+        } else if let Some(hours_remaining) = output.hours_remaining {
+            println!("Hours remaining: {:.1}h at current rate", hours_remaining);
         } else {
-            println!(
-                "Hours remaining: {:.1}h at current rate",
-                output.hours_remaining
-            );
+            println!("Hours remaining: n/a (no spend yet today)");
         }
     }
 
     Ok(())
+}
+
+fn output_over_budget(today_cost: f64, budget: f64) -> bool {
+    today_cost > budget
 }
 
 /// Convert CLI SortField to report SortField
