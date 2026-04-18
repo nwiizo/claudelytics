@@ -89,6 +89,20 @@ pub(crate) struct PricingCacheStatus {
     model_count: usize,
 }
 
+// Wraps ClipboardContext so TuiApp can still `#[derive(Debug)]`.
+// copypasta's ClipboardContext doesn't implement Debug itself.
+pub(crate) struct ClipboardHolder(pub(crate) Option<copypasta::ClipboardContext>);
+
+impl std::fmt::Debug for ClipboardHolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.0.is_some() {
+            "ClipboardHolder(<context>)"
+        } else {
+            "ClipboardHolder(None)"
+        })
+    }
+}
+
 #[derive(Debug)]
 pub struct TuiApp {
     pub(crate) daily_report: DailyReport,
@@ -142,4 +156,8 @@ pub struct TuiApp {
     // Cache analysis (computed lazily)
     pub(crate) cache_analysis: Option<CacheAnalysis>,
     pub(crate) cache_table_state: TableState,
+    // Persistent clipboard context.
+    // Needed because dropping the context releases the X11 selection owner,
+    // looing the clipboard contents.
+    pub(crate) clipboard: ClipboardHolder,
 }

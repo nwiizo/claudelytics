@@ -1,4 +1,5 @@
 use anyhow::Result;
+use copypasta::ClipboardContext;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -14,7 +15,7 @@ use ratatui::{
 };
 use std::io;
 
-use super::{AppMode, ExportDialogState, ExportFormat, Tab, TuiApp};
+use super::{AppMode, ClipboardHolder, ExportDialogState, ExportFormat, Tab, TuiApp};
 use crate::billing_blocks::BillingBlockManager;
 use crate::models::{Command, CommandAction, DailyReport, SessionReport};
 use crate::pricing_cache::PricingCache;
@@ -100,6 +101,7 @@ impl TuiApp {
             weekly_table_state: TableState::default(),
             cache_analysis: None,
             cache_table_state: TableState::default(),
+            clipboard: ClipboardHolder(ClipboardContext::new().ok()),
         };
 
         // Apply initial filters and sorting
