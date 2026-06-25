@@ -116,7 +116,7 @@ impl TuiApp {
                 Line::from("No sessions found for current filters"),
                 Line::from(""),
                 Line::from("Try:"),
-                Line::from("- Press 'f' to change time filter"),
+                Line::from("- Set --today, --last-7d, or --since before launching TUI"),
                 Line::from("- Press 'r' to refresh data"),
                 Line::from("- Check if you have usage data in ~/.claude/projects/"),
             ];
@@ -132,16 +132,28 @@ impl TuiApp {
             return;
         }
 
-        let header_cells = [
-            "Project",
-            "Session",
-            "Cost",
-            "Tokens",
-            "Cache Hit%",
-            "Last Activity",
-        ]
-        .iter()
-        .map(|h| {
+        let table_width = chunks[1].width;
+        let compact = table_width < 108;
+        let very_compact = table_width < 66;
+
+        let headers: Vec<&str> = if very_compact {
+            vec!["Project", "Cost", "Tokens"]
+        } else if compact {
+            vec!["Project", "Session", "Cost", "Tokens", "Hit%", "Last"]
+        } else {
+            vec![
+                "Project",
+                "Session",
+                "Cost",
+                "tok/$",
+                "Tokens",
+                "Cache%",
+                "Hit%",
+                "Last Activity",
+            ]
+        };
+
+        let header_cells = headers.iter().map(|h| {
             Cell::from(*h).style(
                 Style::default()
                     .fg(Color::Cyan)
@@ -190,18 +202,28 @@ impl TuiApp {
                     "-".to_string()
                 };
 
-                let cache_denom = session.cache_read_tokens
-                    + session.cache_creation_tokens
-                    + session.input_tokens;
-                let cache_hit_pct = if cache_denom > 0 {
-                    session.cache_read_tokens as f64 / cache_denom as f64 * 100.0
-                } else {
-                    0.0
-                };
+                let cache_hit_pct = Self::cache_hit_rate_pct(
+                    session.cache_read_tokens,
+                    session.cache_creation_tokens,
+                );
+                let cache_share_pct = Self::cache_share_pct(
+                    session.total_tokens,
+                    session.cache_read_tokens,
+                    session.cache_creation_tokens,
+                );
+                let tokens_per_dollar =
+                    Self::tokens_per_dollar(session.total_tokens, session.total_cost);
 
                 let cost_color = Self::cost_color(session.total_cost);
 
                 let hit_color = Self::cache_hit_color(cache_hit_pct);
+                let project_limit = if very_compact {
+                    table_width.saturating_sub(24).max(12) as usize
+                } else if compact {
+                    table_width.saturating_sub(56).max(18) as usize
+                } else {
+                    30
+                };
 
                 let style = if self.current_mode == AppMode::Visual
                     && self.visual_mode_selections.contains(&i)
@@ -213,44 +235,106 @@ impl TuiApp {
                     Style::default().fg(Color::Gray)
                 };
 
-                Row::new(vec![
-                    Cell::from(Self::truncate_text(&project_name, 30)).style(style),
-                    Cell::from(session_short).style(Style::default().fg(Color::DarkGray)),
-                    Cell::from(format!("${:.2}", session.total_cost))
-                        .style(Style::default().fg(cost_color)),
-                    Cell::from(Self::format_number(session.total_tokens))
+                let mut cells = vec![
+                    Cell::from(Self::truncate_text(&project_name, project_limit)).style(style),
+                ];
+
+                if !very_compact {
+                    cells.push(
+                        Cell::from(session_short).style(Style::default().fg(Color::DarkGray)),
+                    );
+                }
+
+                cells.extend([Cell::from(format!("${:.2}", session.total_cost))
+                    .style(Style::default().fg(cost_color))]);
+
+                if !compact {
+                    cells.push(
+                        Cell::from(Self::format_tokens_static(tokens_per_dollar as u64))
+                            .style(Style::default().fg(Color::Green)),
+                    );
+                }
+
+                cells.push(
+                    Cell::from(Self::format_number_adaptive(session.total_tokens, compact))
                         .style(Style::default().fg(Color::Magenta)),
-                    Cell::from(format!("{:.1}%", cache_hit_pct))
-                        .style(Style::default().fg(hit_color)),
-                    Cell::from(session.last_activity.clone())
-                        .style(Style::default().fg(Color::Yellow)),
-                ])
-                .height(1)
+                );
+
+                if !compact {
+                    cells.push(
+                        Cell::from(format!("{:.1}%", cache_share_pct))
+                            .style(Style::default().fg(Color::Yellow)),
+                    );
+                }
+                if !very_compact {
+                    cells.push(
+                        Cell::from(format!("{:.1}%", cache_hit_pct))
+                            .style(Style::default().fg(hit_color)),
+                    );
+                }
+
+                if !very_compact {
+                    let last_activity = if compact && session.last_activity.len() == 10 {
+                        session.last_activity[5..].to_string()
+                    } else {
+                        session.last_activity.clone()
+                    };
+                    cells.push(Cell::from(last_activity).style(Style::default().fg(Color::Yellow)));
+                }
+
+                Row::new(cells).height(1)
             });
 
-        let table = Table::new(
-            rows,
-            [
+        let widths: Vec<Constraint> = if very_compact {
+            vec![
+                Constraint::Min(16),
+                Constraint::Length(9),
+                Constraint::Length(9),
+            ]
+        } else if compact {
+            vec![
+                Constraint::Min(18),
+                Constraint::Length(9),
+                Constraint::Length(9),
+                Constraint::Length(9),
+                Constraint::Length(7),
+                Constraint::Length(7),
+            ]
+        } else {
+            vec![
                 Constraint::Percentage(30),
                 Constraint::Length(10),
                 Constraint::Length(10),
+                Constraint::Length(9),
                 Constraint::Length(12),
-                Constraint::Length(10),
+                Constraint::Length(8),
+                Constraint::Length(8),
                 Constraint::Length(20),
-            ],
-        )
-        .header(header)
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(format!(
-                    "\u{1f4cb} Session Data ({} items)",
-                    self.session_report.sessions.len()
-                ))
-                .border_style(Style::default().fg(Color::Blue)),
-        )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
-        .highlight_symbol("\u{25ba} ");
+            ]
+        };
+
+        let title = if compact {
+            format!(
+                "\u{1f4cb} Session Data ({} items, compact)",
+                self.session_report.sessions.len()
+            )
+        } else {
+            format!(
+                "\u{1f4cb} Session Data ({} items)",
+                self.session_report.sessions.len()
+            )
+        };
+
+        let table = Table::new(rows, widths)
+            .header(header)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
+            .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+            .highlight_symbol("\u{25ba} ");
 
         f.render_stateful_widget(
             table,

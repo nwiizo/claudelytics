@@ -5,7 +5,7 @@
 [![CI](https://github.com/nwiizo/claudelytics/actions/workflows/ci.yml/badge.svg)](https://github.com/nwiizo/claudelytics/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token consumption, and costs. Get comprehensive insights into your Claude Code usage with beautiful table outputs, interactive session browsers, advanced TUI interfaces, real-time monitoring, and seamless shell integration.
+A fast, parallel Rust CLI for auditing Claude Code and Codex usage, token consumption, and costs from local logs. It answers the practical question “where did my agent budget go?” with unified daily/session totals and source-aware model breakdowns.
 
 ![Enhanced TUI Demo](assets/enhanced-tui-demo.gif)
 
@@ -13,18 +13,20 @@ A fast, parallel Rust CLI tool for analyzing Claude Code usage patterns, token c
 
 ### Core Analytics
 - **📊 Daily Reports**: Analyze usage patterns by day with token counts and costs
-- **📈 Session Reports**: Break down usage by individual Claude Code sessions  
+- **📈 Session Reports**: Break down usage by Claude Code and Codex sessions
+- **🤖 Cross-Agent Audit**: Normal execution shows separate Claude Code/Codex totals and per-model usage after the unified daily report
+- **♻️ Cache Accounting**: Keep cache writes and reads separate; Codex cache writes are shown as unavailable when local logs do not expose them
 - **💰 Cost Tracking**: Quick cost summaries for today, specific dates, or totals
 - **⏰ 5-Hour Billing Blocks**: Track usage in Claude's actual billing periods (00:00-05:00, 05:00-10:00, etc. UTC)
 - **🔍 Flexible Filtering**: Filter data by date ranges with `--since` and `--until`
-- **🎯 Model Filtering**: Filter by specific Claude models (opus, sonnet, haiku) or model versions
+- **🎯 Model Filtering**: Filter Fable, Opus, Sonnet, Haiku, OpenAI families, aliases, or exact models
+- **📚 Current Model Pricing**: Audit Claude Fable 5 and GPT-5.6 Sol/Terra/Luna, including GPT-5.6 long-context pricing
 - **📋 Model Registry**: Future-proof model management with aliases and automatic recognition
 - **💾 Offline Pricing Cache**: 7-day cache for pricing data to work without internet connection
 
 ### Interactive & Real-time
 - **🎯 Interactive Mode**: peco-style fuzzy searchable session selector
-- **🎨 Enhanced TUI**: Full-featured terminal interface with 6 tabs including billing blocks
-- **🚀 Advanced TUI**: Professional-grade analytics with 9 tabs, drill-down, comparison, and live monitoring
+- **🎨 Enhanced TUI**: Eight responsive views including audit overview, agent/model usage, sessions, cache, and billing blocks
 - **👀 Watch Mode**: Real-time monitoring with automatic updates
 - **🔥 Live Dashboard**: Real-time token burn rate monitoring with projections and alerts
 - **⚡ Today Filter**: `--today` flag for quick current day analysis
@@ -94,12 +96,15 @@ The install script:
 
 ### Prerequisites
 
-- Rust 1.70+ and Cargo
-- Claude Code installed and used at least once (creates `~/.claude` directory)
+- Rust 1.88+ and Cargo
+- Claude Code and/or Codex used at least once (creates `~/.claude` and/or `~/.codex`)
 
 ## 📋 Quick Start
 
 ```bash
+# Unified daily report, separate agent totals, and per-model usage
+claudelytics
+
 # Show today's cost
 claudelytics cost --today
 
@@ -109,11 +114,15 @@ claudelytics interactive
 # Enhanced TUI interface
 claudelytics tui
 
-# Advanced TUI with professional features
-claudelytics advanced-tui
-
 # Today's usage report
 claudelytics --today
+
+# Audit costs by source and model
+claudelytics --breakdown
+
+# Audit Claude Fable 5 or the GPT-5.6 provider default (Sol)
+claudelytics --model-filter fable --breakdown
+claudelytics --model-filter gpt-5.6 --breakdown
 
 # Watch real-time usage
 claudelytics watch
@@ -151,10 +160,8 @@ claudelytics live --cost-limit 50    # Set daily cost limit ($50)
 claudelytics blocks --live           # Alternative: use blocks command with live mode
 
 # Terminal User Interface
-claudelytics tui                    # Enhanced TUI (5 tabs)
+claudelytics tui                    # Responsive TUI (8 views)
 claudelytics --tui                  # Alternative flag
-claudelytics advanced-tui           # Advanced TUI (9 tabs with professional features)
-claudelytics --advanced-tui         # Alternative flag
 
 # Cost summaries
 claudelytics cost
@@ -254,12 +261,15 @@ claudelytics conversation --session abc123 --include-thinking --include-tools
 
 ```bash
 # Filter by model family
+claudelytics --model-filter fable    # Show only Claude Fable usage
 claudelytics --model-filter opus     # Show only Opus model usage
 claudelytics --model-filter sonnet   # Show only Sonnet model usage
 claudelytics --model-filter haiku    # Show only Haiku model usage
+claudelytics --model-filter openai   # Show only Codex/OpenAI usage
 
 # Filter by model alias
-claudelytics --model-filter opus4    # Opus 4 models
+claudelytics --model-filter fable5   # Claude Fable 5
+claudelytics --model-filter gpt-5.6  # GPT-5.6 Sol provider default
 claudelytics --model-filter sonnet-3.5  # Sonnet 3.5 models
 
 # Filter by specific model
@@ -374,39 +384,22 @@ claudelytics config --reset
 
 A full-featured terminal interface with:
 
-- **📊 Overview Tab**: Enhanced summary with quick stats and visual elements
-- **📅 Daily Tab**: Color-coded daily usage with sorting and filtering
-- **📋 Sessions Tab**: Searchable session analytics with real-time filter
-- **💬 Conversations Tab**: View full conversation content with thinking blocks and tool usage (NEW)
-- **📈 Charts Tab**: ASCII charts, cost trends, and token usage visualization
+- **📊 Overview Tab**: Unified Claude Code and Codex summary
+- **📅 Daily Tab**: Color-coded daily usage with sorting
+- **📆 Weekly Tab**: Weekly usage aggregation and trends
+- **🤖 Models Tab**: Source-aware agent and model usage
+- **📋 Sessions Tab**: Searchable session analytics
+- **♻️ Cache Tab**: Cache write/read accounting
 - **⏰ Billing Tab**: 5-hour billing blocks with cost analysis and pricing cache status
 - **❓ Help Tab**: Comprehensive help with keyboard shortcuts
 
 **Navigation:**
-- Use `1-7` keys or `Tab`/`Shift+Tab` to switch tabs
+- Use `1-7`, `h`, or `Tab`/`Shift+Tab` to switch tabs
 - Use `j/k` or arrow keys to navigate tables
-- Press `/` to search, `s` to sort, `f` to filter by time
-- Press `c` in Sessions tab to view full conversation (NEW)
-- Press `t` to toggle thinking blocks, `u` to toggle tool usage (NEW)
+- Press `/` to search within the loaded scope and `s` to sort
+- Set the loaded time range before launch with `--today`, `--since`, or `--until`
 - Press `r` to refresh, `e` to export, `c` to clear status
 - Press `?` for quick help popup, `q` or `Esc` to quit
-
-### Advanced TUI (`claudelytics advanced-tui`)
-Professional-grade analytics interface with all Enhanced TUI features plus:
-
-- **🔍 Drill-Down Tab**: Message-level analysis with efficiency metrics
-- **⚖️ Compare Tab**: Side-by-side session comparison and analysis
-- **🏆 Benchmark Tab**: Performance rankings and optimization recommendations
-- **🔴 Live Tab**: Real-time monitoring with sparklines and activity tracking
-- **📊 Charts Tab**: Advanced visualizations, heatmaps, and usage patterns
-
-**Advanced Features:**
-- **🎯 Command Palette**: Press `Ctrl+P` for quick action access with fuzzy search
-- **🔖 Bookmark System**: Press `b` to bookmark important sessions
-- **📊 Session Detail**: Press `d` to drill down into message-level analysis
-- **⚖️ Session Comparison**: Press `x` to add sessions to comparison
-- **🔴 Live Mode**: Press `l` to toggle real-time monitoring
-- **📁 Smart Export**: Export comparison reports and detailed analytics
 
 ## 🐚 Shell Integration
 
@@ -424,7 +417,6 @@ alias cwt='claudelytics --today'
 alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
-alias catui='claudelytics advanced-tui'
 
 # Function to check cost for specific date
 cdate() {
@@ -454,7 +446,6 @@ alias cwt='claudelytics --today'
 alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
-alias catui='claudelytics advanced-tui'
 
 # Function to check cost for specific date
 function cdate
@@ -484,7 +475,6 @@ alias cwt='claudelytics --today'
 alias cwatch='claudelytics watch'
 alias cint='claudelytics interactive'
 alias ctui='claudelytics tui'
-alias catui='claudelytics advanced-tui'
 
 # Function to check cost for specific date
 cdate() {
@@ -513,7 +503,6 @@ cdate 20241201  # Specific date cost
 cwt             # Today's full report
 cint            # Interactive session browser
 ctui            # Enhanced TUI interface
-catui           # Advanced TUI with professional features
 cwatch          # Real-time monitoring
 cdaily          # Quick daily summary
 ```
@@ -699,11 +688,8 @@ cargo run --release -- session --json
 cargo run -- cost --today
 cargo run -- interactive
 cargo run -- tui
-cargo run -- advanced-tui
 cargo run -- watch
 ```
-
-**Note:** Building may show some warnings about unused code in advanced TUI features. These are from planned features that are partially implemented and will be completed in future releases.
 
 ## 🐛 Troubleshooting
 
@@ -746,5 +732,5 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🙏 Acknowledgments
 
 - Built with ❤️ in Rust
-- Inspired by the need for better Claude Code usage analytics
+- Inspired by the need for trustworthy local AI coding usage analytics
 - Thanks to the Rust community for excellent crates and tools

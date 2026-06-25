@@ -1,15 +1,16 @@
 [package]
 name = "claudelytics"
-version = "0.6.2"
+version = "0.6.4"
 edition = "2024"
-description = "A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs"
+rust-version = "1.88"
+description = "A fast CLI tool for auditing Claude Code and Codex token usage, sessions, and costs"
 authors = ["nwiizo <nwiizo@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/nwiizo/claudelytics"
 homepage = "https://github.com/nwiizo/claudelytics"
 documentation = "https://github.com/nwiizo/claudelytics"
 readme = "README.md"
-keywords = ["claude", "analytics", "cli", "usage", "tokens"]
+keywords = ["claude", "codex", "analytics", "usage", "tokens"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["target/", ".git/", ".github/"]
 
@@ -18,16 +19,18 @@ clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 anyhow = "1.0"
+memchr = "2.7"
 walkdir = "2.3"
 comfy-table = "7.0"
 colored = "2.0"
 tokio = { version = "1.0", features = ["full"] }
 rayon = "1.8"
-crossterm = "0.28"
+crossterm = "0.29"
 csv = "1.3"
 serde_yaml = "0.9"
-ratatui = "0.28"
+ratatui = "0.30.2"
 copypasta = "0.10"
 regex = "1.10"
 dirs = "5.0"

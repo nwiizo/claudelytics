@@ -5,7 +5,8 @@ impl TuiApp {
         self.current_tab = match self.current_tab {
             Tab::Overview => Tab::Daily,
             Tab::Daily => Tab::Weekly,
-            Tab::Weekly => Tab::Sessions,
+            Tab::Weekly => Tab::Models,
+            Tab::Models => Tab::Sessions,
             Tab::Sessions => Tab::Cache,
             Tab::Cache => Tab::BillingBlocks,
             Tab::BillingBlocks => Tab::Help,
@@ -18,7 +19,8 @@ impl TuiApp {
             Tab::Overview => Tab::Help,
             Tab::Daily => Tab::Overview,
             Tab::Weekly => Tab::Daily,
-            Tab::Sessions => Tab::Weekly,
+            Tab::Models => Tab::Weekly,
+            Tab::Sessions => Tab::Models,
             Tab::Cache => Tab::Sessions,
             Tab::BillingBlocks => Tab::Cache,
             Tab::Help => Tab::BillingBlocks,
@@ -73,6 +75,19 @@ impl TuiApp {
                 };
                 self.session_table_state.select(Some(i));
                 self.session_scroll_state = self.session_scroll_state.position(i);
+            }
+            Tab::Models => {
+                let i = match self.model_table_state.selected() {
+                    Some(i) => {
+                        if i >= self.model_report.models.len().saturating_sub(1) {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.model_table_state.select(Some(i));
             }
             Tab::BillingBlocks => {
                 let report = self.billing_manager.generate_report();
@@ -162,6 +177,19 @@ impl TuiApp {
                 self.session_table_state.select(Some(i));
                 self.session_scroll_state = self.session_scroll_state.position(i);
             }
+            Tab::Models => {
+                let i = match self.model_table_state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.model_report.models.len().saturating_sub(1)
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.model_table_state.select(Some(i));
+            }
             Tab::BillingBlocks => {
                 let report = self.billing_manager.generate_report();
                 let i = match self.billing_blocks_table_state.selected() {
@@ -213,6 +241,9 @@ impl TuiApp {
                 self.session_table_state.select(Some(0));
                 self.session_scroll_state = self.session_scroll_state.position(0);
             }
+            Tab::Models => {
+                self.model_table_state.select(Some(0));
+            }
             Tab::BillingBlocks => {
                 self.billing_blocks_table_state.select(Some(0));
                 self.billing_blocks_scroll_state = self.billing_blocks_scroll_state.position(0);
@@ -247,6 +278,12 @@ impl TuiApp {
                 if len > 0 {
                     self.session_table_state.select(Some(len - 1));
                     self.session_scroll_state = self.session_scroll_state.position(len - 1);
+                }
+            }
+            Tab::Models => {
+                let len = self.model_report.models.len();
+                if len > 0 {
+                    self.model_table_state.select(Some(len - 1));
                 }
             }
             Tab::BillingBlocks => {
@@ -288,7 +325,12 @@ impl TuiApp {
 
     pub(crate) fn jump_to_line_start(&mut self) {
         match self.current_tab {
-            Tab::Daily | Tab::Weekly | Tab::Sessions | Tab::BillingBlocks | Tab::Cache => {
+            Tab::Daily
+            | Tab::Weekly
+            | Tab::Models
+            | Tab::Sessions
+            | Tab::BillingBlocks
+            | Tab::Cache => {
                 self.status_message = Some("At beginning of line".to_string());
             }
             _ => {}
@@ -297,7 +339,12 @@ impl TuiApp {
 
     pub(crate) fn jump_to_line_end(&mut self) {
         match self.current_tab {
-            Tab::Daily | Tab::Weekly | Tab::Sessions | Tab::BillingBlocks | Tab::Cache => {
+            Tab::Daily
+            | Tab::Weekly
+            | Tab::Models
+            | Tab::Sessions
+            | Tab::BillingBlocks
+            | Tab::Cache => {
                 self.status_message = Some("At end of line".to_string());
             }
             _ => {}
@@ -315,6 +362,7 @@ impl TuiApp {
             self.visual_mode_start = match self.current_tab {
                 Tab::Daily => self.daily_table_state.selected(),
                 Tab::Weekly => self.weekly_table_state.selected(),
+                Tab::Models => self.model_table_state.selected(),
                 Tab::Sessions => self.session_table_state.selected(),
                 Tab::BillingBlocks => self.billing_blocks_table_state.selected(),
                 Tab::Cache => self.cache_table_state.selected(),

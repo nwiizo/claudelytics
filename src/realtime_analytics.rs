@@ -419,7 +419,7 @@ impl<'a> RealtimeAnalytics<'a> {
             .iter()
             .map(|(hour, metrics)| (*hour, metrics.usage.total_tokens()))
             .collect();
-        peak_hours.sort_by(|a, b| b.1.cmp(&a.1));
+        peak_hours.sort_by_key(|entry| std::cmp::Reverse(entry.1));
         let peak_usage_hours: Vec<u32> = peak_hours.iter().take(3).map(|(h, _)| *h).collect();
 
         // Calculate efficiency score (tokens per dollar normalized)

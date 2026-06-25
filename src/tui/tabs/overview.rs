@@ -3,261 +3,301 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Sparkline, Table},
 };
+use std::collections::BTreeMap;
 
-use crate::tui::TuiApp;
-use crate::tui_visuals::{ProgressColorScheme, SmoothProgressBar};
+use crate::models::ModelUsage;
+use crate::tui::{SortMode, TuiApp};
+
+#[derive(Default)]
+struct AgentSummary {
+    tokens: u64,
+    cost: f64,
+}
 
 impl TuiApp {
-    pub(crate) fn render_overview(&mut self, f: &mut Frame, area: Rect) {
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(10), // Enhanced summary
-                Constraint::Length(8),  // Quick stats
-                Constraint::Length(3),  // Progress bars
-                Constraint::Min(0),     // Cost breakdown with chart
-            ])
-            .margin(1)
-            .split(area);
-
-        // Enhanced summary card
-        let summary_text = vec![
-            Line::from(vec![
-                Span::styled("\u{1f4b0} Total Cost: ", Style::default().fg(Color::White)),
-                Span::styled(
-                    format!("${:.2}", self.daily_report.totals.total_cost),
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
-                Span::styled("\u{1f4c5} Days: ", Style::default().fg(Color::White)),
-                Span::styled(
-                    format!("{}", self.daily_report.daily.len()),
-                    Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
-                Span::styled("\u{1f4c2} Sessions: ", Style::default().fg(Color::White)),
-                Span::styled(
-                    format!("{}", self.session_report.sessions.len()),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "\u{1f3af} Total Tokens: ",
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    Self::format_number(self.daily_report.totals.total_tokens),
-                    Style::default()
-                        .fg(Color::Magenta)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("\u{1f4e5} Input: ", Style::default().fg(Color::White)),
-                Span::styled(
-                    Self::format_number(self.daily_report.totals.input_tokens),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
-                Span::styled("\u{1f4e4} Output: ", Style::default().fg(Color::White)),
-                Span::styled(
-                    Self::format_number(self.daily_report.totals.output_tokens),
-                    Style::default().fg(Color::Blue),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("\u{1f504} Cache: ", Style::default().fg(Color::White)),
-                Span::styled(
-                    Self::format_number(
-                        self.daily_report.totals.cache_creation_tokens
-                            + self.daily_report.totals.cache_read_tokens,
-                    ),
-                    Style::default().fg(Color::Yellow),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "\u{26a1} Quick Actions: ",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("/ Search", Style::default().fg(Color::Gray)),
-                Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-                Span::styled("s Sort", Style::default().fg(Color::Gray)),
-                Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-                Span::styled("f Filter", Style::default().fg(Color::Gray)),
-                Span::styled(" | ", Style::default().fg(Color::DarkGray)),
-                Span::styled("r Refresh", Style::default().fg(Color::Gray)),
-            ]),
-        ];
-
-        let summary = Paragraph::new(summary_text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("\u{1f4ca} Enhanced Usage Summary")
-                    .border_style(Style::default().fg(Color::Blue)),
-            )
-            .wrap(Wrap { trim: true });
-        f.render_widget(summary, chunks[0]);
-
-        // Quick stats with current filters
-        let filter_info = match self.time_filter {
-            crate::tui::TimeFilter::All => "All Time",
-            crate::tui::TimeFilter::Today => "Today",
-            crate::tui::TimeFilter::LastWeek => "Last Week",
-            crate::tui::TimeFilter::LastMonth => "Last Month",
+    pub(crate) fn render_overview(&self, frame: &mut Frame, area: Rect) {
+        let sort = match self.sort_mode {
+            SortMode::Date => "date",
+            SortMode::Cost => "cost",
+            SortMode::Tokens => "tokens",
+            SortMode::Efficiency => "efficiency",
+            SortMode::Project => "project",
         };
 
-        let sort_info = match self.sort_mode {
-            crate::tui::SortMode::Date => "Date",
-            crate::tui::SortMode::Cost => "Cost",
-            crate::tui::SortMode::Tokens => "Tokens",
-            crate::tui::SortMode::Efficiency => "Efficiency",
-            crate::tui::SortMode::Project => "Project",
+        let outer = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(
+                " Audit overview · loaded scope · sorted by {sort} "
+            ))
+            .title_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .border_style(Style::default().fg(Color::DarkGray));
+        let inner = outer.inner(area);
+        frame.render_widget(outer, area);
+        if inner.width < 40 || inner.height < 8 {
+            frame.render_widget(
+                Paragraph::new("Terminal is too small. Resize to at least 40×10."),
+                inner,
+            );
+            return;
+        }
+
+        let show_trend = inner.height >= 17;
+        let sections = if show_trend {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(7),
+                    Constraint::Length(3),
+                    Constraint::Length(1),
+                ])
+                .split(inner)
+        } else {
+            Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(4),
+                    Constraint::Length(0),
+                    Constraint::Length(1),
+                ])
+                .split(inner)
         };
 
-        let stats_text = vec![
-            Line::from(vec![
-                Span::styled("\u{1f50d} Current View: ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    filter_info,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
-                Span::styled("\u{1f4ca} Sort: ", Style::default().fg(Color::Cyan)),
-                Span::styled(
-                    sort_info,
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::styled(
-                    "\u{1f4c8} Avg Cost/Day: ",
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    format!(
-                        "${:.2}",
-                        if self.daily_report.daily.is_empty() {
-                            0.0
-                        } else {
-                            self.daily_report.totals.total_cost
-                                / self.daily_report.daily.len() as f64
-                        }
-                    ),
-                    Style::default().fg(Color::Green),
-                ),
-                Span::styled("  |  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    "\u{1f680} Avg Tokens/Day: ",
-                    Style::default().fg(Color::White),
-                ),
-                Span::styled(
-                    Self::format_number(if self.daily_report.daily.is_empty() {
-                        0
-                    } else {
-                        self.daily_report.totals.total_tokens / self.daily_report.daily.len() as u64
-                    }),
-                    Style::default().fg(Color::Magenta),
-                ),
-            ]),
-        ];
+        self.render_overview_totals(frame, sections[0]);
+        self.render_overview_details(frame, sections[1]);
+        if show_trend {
+            self.render_overview_trend(frame, sections[2]);
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled("4", Style::default().fg(Color::Yellow)),
+                Span::raw(" models  "),
+                Span::styled("5", Style::default().fg(Color::Yellow)),
+                Span::raw(" sessions  "),
+                Span::styled("2", Style::default().fg(Color::Yellow)),
+                Span::raw(" daily  "),
+                Span::styled("r", Style::default().fg(Color::Yellow)),
+                Span::raw(" refresh  "),
+                Span::styled("?", Style::default().fg(Color::Yellow)),
+                Span::raw(" help"),
+            ])),
+            sections[3],
+        );
+    }
 
-        let stats = Paragraph::new(stats_text)
-            .block(
+    fn render_overview_totals(&self, frame: &mut Frame, area: Rect) {
+        let totals = &self.daily_report.totals;
+        let cache_share = Self::cache_share_pct(
+            totals.total_tokens,
+            totals.cache_read_tokens,
+            totals.cache_creation_tokens,
+        );
+        let separator = Span::styled("  │  ", Style::default().fg(Color::DarkGray));
+        let line = Line::from(vec![
+            Span::styled("COST ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("${:.2}", totals.total_cost),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            separator.clone(),
+            Span::styled("TOKENS ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                Self::format_number(totals.total_tokens),
+                Style::default()
+                    .fg(Color::Magenta)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            separator.clone(),
+            Span::styled("CACHE ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                format!("{cache_share:.1}%"),
+                Style::default().fg(Color::Yellow),
+            ),
+            separator.clone(),
+            Span::styled("DAYS ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                self.daily_report.daily.len().to_string(),
+                Style::default().fg(Color::Blue),
+            ),
+            separator,
+            Span::styled("SESSIONS ", Style::default().fg(Color::Gray)),
+            Span::styled(
+                self.session_report.sessions.len().to_string(),
+                Style::default().fg(Color::Cyan),
+            ),
+        ]);
+
+        frame.render_widget(
+            Paragraph::new(line).block(
                 Block::default()
-                    .borders(Borders::ALL)
-                    .title("\u{1f4cb} Current Filters & Stats")
-                    .border_style(Style::default().fg(Color::Cyan)),
-            )
-            .wrap(Wrap { trim: true });
-        f.render_widget(stats, chunks[1]);
+                    .borders(Borders::BOTTOM)
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            ),
+            area,
+        );
+    }
 
-        // Render progress bars
-        let progress_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(chunks[2]);
-
-        // Compute dynamic maximums from actual data
-        let max_daily_cost = self
-            .daily_report
-            .daily
-            .iter()
-            .map(|d| d.total_cost)
-            .fold(0.0_f64, f64::max)
-            .max(1.0);
-        let max_daily_tokens = self
-            .daily_report
-            .daily
-            .iter()
-            .map(|d| d.total_tokens)
-            .max()
-            .unwrap_or(1) as f64;
-        let cost_ceiling = (max_daily_cost * 1.2).max(10.0);
-        let token_ceiling = (max_daily_tokens * 1.2).max(100_000.0);
-
-        // Cost progress bar
-        if self.visual_effects.progress_bars.is_empty() {
-            let mut cost_bar = SmoothProgressBar::new("Daily Cost".to_string(), cost_ceiling);
-            cost_bar.set_value(self.daily_report.totals.total_cost);
-            cost_bar.set_color_scheme(ProgressColorScheme::CostBased);
-            self.visual_effects.progress_bars.push(cost_bar);
-
-            let mut token_bar = SmoothProgressBar::new("Token Usage".to_string(), token_ceiling);
-            token_bar.set_value(self.daily_report.totals.total_tokens as f64);
-            token_bar.set_color_scheme(ProgressColorScheme::TokenBased);
-            self.visual_effects.progress_bars.push(token_bar);
-        }
-
-        // Update progress bar values and max
-        if let Some(cost_bar) = self.visual_effects.progress_bars.get_mut(0) {
-            cost_bar.set_max(cost_ceiling);
-            cost_bar.set_value(self.daily_report.totals.total_cost);
-            cost_bar.render(f, progress_chunks[0]);
-        }
-
-        if let Some(token_bar) = self.visual_effects.progress_bars.get_mut(1) {
-            token_bar.set_max(token_ceiling);
-            token_bar.set_value(self.daily_report.totals.total_tokens as f64);
-            token_bar.render(f, progress_chunks[1]);
-        }
-
-        // Cost gauge based on total cost relative to dynamic max
-        if self.daily_report.totals.total_cost > 0.0 {
-            let cost_ratio = (self.daily_report.totals.total_cost / cost_ceiling).min(1.0);
-            let gauge = Gauge::default()
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("\u{1f4b3} Total Cost")
-                        .border_style(Style::default().fg(Color::Yellow)),
-                )
-                .gauge_style(Style::default().fg(Color::Green))
-                .ratio(cost_ratio)
-                .label(format!(
-                    "${:.2} / ${:.0}",
-                    self.daily_report.totals.total_cost, cost_ceiling
-                ));
-            f.render_widget(gauge, chunks[3]);
+    fn render_overview_details(&self, frame: &mut Frame, area: Rect) {
+        if area.width >= 112 {
+            let columns = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(46), Constraint::Percentage(54)])
+                .split(area);
+            self.render_agent_summary(frame, columns[0]);
+            self.render_top_models(frame, columns[1]);
+        } else {
+            let rows = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(5), Constraint::Min(4)])
+                .split(area);
+            self.render_agent_summary(frame, rows[0]);
+            self.render_top_models(frame, rows[1]);
         }
     }
+
+    fn render_agent_summary(&self, frame: &mut Frame, area: Rect) {
+        let mut summaries = BTreeMap::from([
+            ("Claude Code".to_string(), AgentSummary::default()),
+            ("Codex".to_string(), AgentSummary::default()),
+        ]);
+        for model in &self.model_report.models {
+            let summary = summaries.entry(model.agent.clone()).or_default();
+            summary.tokens = summary.tokens.saturating_add(model.total_tokens);
+            summary.cost += model.total_cost;
+        }
+
+        let total_cost: f64 = summaries.values().map(|summary| summary.cost).sum();
+        let total_tokens = summaries
+            .values()
+            .fold(0_u64, |total, summary| total.saturating_add(summary.tokens));
+        let rows = summaries.into_iter().map(|(agent, summary)| {
+            let share = if total_cost > 0.0 {
+                summary.cost / total_cost * 100.0
+            } else if total_tokens > 0 {
+                summary.tokens as f64 / total_tokens as f64 * 100.0
+            } else {
+                0.0
+            };
+            Row::new(vec![
+                Cell::from(agent),
+                Cell::from(format!("${:.2}", summary.cost)),
+                Cell::from(format!("{share:.1}%")),
+                Cell::from(Self::format_number(summary.tokens)),
+            ])
+        });
+        let title = if self.model_report_loading {
+            " Agent split · loading "
+        } else {
+            " Agent split "
+        };
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(13),
+                Constraint::Length(10),
+                Constraint::Length(8),
+                Constraint::Min(10),
+            ],
+        )
+        .header(
+            Row::new(["Agent", "Cost", "Share", "Tokens"]).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(Color::Blue)),
+        )
+        .column_spacing(1);
+        frame.render_widget(table, area);
+    }
+
+    fn render_top_models(&self, frame: &mut Frame, area: Rect) {
+        let rows = self
+            .model_report
+            .models
+            .iter()
+            .take(area.height.saturating_sub(3) as usize)
+            .map(model_row);
+        let title = if let Some(error) = &self.model_report_error {
+            format!(" Top models · {error} ")
+        } else if self.model_report_loading {
+            " Top models · loading ".to_string()
+        } else {
+            " Top models by cost · loaded scope ".to_string()
+        };
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(12),
+                Constraint::Min(18),
+                Constraint::Length(10),
+                Constraint::Length(12),
+            ],
+        )
+        .header(
+            Row::new(["Agent", "Model", "Cost", "Tokens"]).style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .column_spacing(1);
+        frame.render_widget(table, area);
+    }
+
+    fn render_overview_trend(&self, frame: &mut Frame, area: Rect) {
+        let mut days: Vec<_> = self.daily_report.daily.iter().collect();
+        days.sort_by(|left, right| left.date.cmp(&right.date));
+        let start = days
+            .len()
+            .saturating_sub(area.width.saturating_sub(2) as usize);
+        let data: Vec<_> = days[start..]
+            .iter()
+            .map(|day| (day.total_cost.max(0.0) * 100.0).round() as u64)
+            .collect();
+        let date_range = days
+            .first()
+            .zip(days.last())
+            .map(|(first, last)| format!("{} → {}", first.date, last.date))
+            .unwrap_or_else(|| "no daily data".to_string());
+        let trend = Sparkline::default()
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!(" Daily cost trend · {date_range} "))
+                    .border_style(Style::default().fg(Color::DarkGray)),
+            )
+            .data(&data)
+            .style(Style::default().fg(Color::Green));
+        frame.render_widget(trend, area);
+    }
+}
+
+fn model_row(model: &ModelUsage) -> Row<'_> {
+    Row::new(vec![
+        Cell::from(model.agent.as_str()),
+        Cell::from(model.model.as_str()),
+        Cell::from(format!("${:.2}", model.total_cost)),
+        Cell::from(TuiApp::format_number(model.total_tokens)),
+    ])
 }

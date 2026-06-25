@@ -34,15 +34,12 @@ pub(crate) fn display_enhanced_summary_card(
     } else {
         0.0
     };
-    let cache_efficiency =
-        if (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens) > 0 {
-            totals.cache_read_tokens as f64
-                / (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens)
-                    as f64
-                * 100.0
-        } else {
-            0.0
-        };
+    let cache_io = totals.cache_read_tokens + totals.cache_creation_tokens;
+    let cache_efficiency = if cache_io > 0 {
+        totals.cache_read_tokens as f64 / cache_io as f64 * 100.0
+    } else {
+        0.0
+    };
 
     println!("{}", "💰 COST & USAGE SUMMARY".bright_yellow().bold());
     println!("┌─────────────────────────────────────────────────────────────────────────────┐");
@@ -96,15 +93,12 @@ pub(crate) fn display_summary_card(totals: &crate::models::TokenUsageTotals, day
     } else {
         0.0
     };
-    let cache_efficiency =
-        if (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens) > 0 {
-            totals.cache_read_tokens as f64
-                / (totals.cache_read_tokens + totals.cache_creation_tokens + totals.input_tokens)
-                    as f64
-                * 100.0
-        } else {
-            0.0
-        };
+    let cache_io = totals.cache_read_tokens + totals.cache_creation_tokens;
+    let cache_efficiency = if cache_io > 0 {
+        totals.cache_read_tokens as f64 / cache_io as f64 * 100.0
+    } else {
+        0.0
+    };
 
     // Fixed width for consistent alignment
     let box_width = 95;

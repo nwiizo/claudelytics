@@ -58,6 +58,7 @@ impl TuiApp {
         let data_type = match self.current_tab {
             Tab::Daily => "daily",
             Tab::Weekly => "weekly",
+            Tab::Models => "models",
             Tab::Sessions => "sessions",
             Tab::BillingBlocks => "billing",
             Tab::Overview => "summary",

@@ -73,15 +73,22 @@ impl TokenUsage {
     /// Calculate total tokens following ccusage methodology
     /// Includes input, output, cache creation, and cache read tokens
     pub fn total_tokens(&self) -> u64 {
-        self.input_tokens + self.output_tokens + self.cache_creation_tokens + self.cache_read_tokens
+        self.input_tokens
+            .saturating_add(self.output_tokens)
+            .saturating_add(self.cache_creation_tokens)
+            .saturating_add(self.cache_read_tokens)
     }
 
     /// Add another TokenUsage to this one
     pub fn add(&mut self, other: &TokenUsage) {
-        self.input_tokens += other.input_tokens;
-        self.output_tokens += other.output_tokens;
-        self.cache_creation_tokens += other.cache_creation_tokens;
-        self.cache_read_tokens += other.cache_read_tokens;
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.cache_creation_tokens = self
+            .cache_creation_tokens
+            .saturating_add(other.cache_creation_tokens);
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(other.cache_read_tokens);
         self.total_cost += other.total_cost;
         self.fast_mode_cost += other.fast_mode_cost;
     }
@@ -106,12 +113,14 @@ impl TokenUsage {
         }
     }
 
-    /// Calculate cache efficiency percentage (cache hits vs cache hits + input)
+    /// Calculate cache hit percentage for cacheable input: reads / (reads + writes).
     #[allow(dead_code)]
     pub fn cache_efficiency(&self) -> f64 {
-        if (self.cache_read_tokens + self.input_tokens) > 0 {
-            self.cache_read_tokens as f64 / (self.cache_read_tokens + self.input_tokens) as f64
-                * 100.0
+        let cache_io = self
+            .cache_read_tokens
+            .saturating_add(self.cache_creation_tokens);
+        if cache_io > 0 {
+            self.cache_read_tokens as f64 / cache_io as f64 * 100.0
         } else {
             0.0
         }

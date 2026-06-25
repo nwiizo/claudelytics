@@ -380,11 +380,12 @@ impl ProjectionCalculator {
                 let remaining = limit - current_month_tokens;
                 let daily_burn = (daily_average as f64 * (1.0 + growth_rate / 100.0)) as u64;
 
-                if daily_burn > 0 {
-                    let days = (remaining / daily_burn) as i64;
-                    (Some(days), Some(today + Duration::days(days)))
-                } else {
-                    (None, None)
+                match remaining
+                    .checked_div(daily_burn)
+                    .and_then(|days| i64::try_from(days).ok())
+                {
+                    Some(days) => (Some(days), Some(today + Duration::days(days))),
+                    None => (None, None),
                 }
             }
         } else {

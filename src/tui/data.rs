@@ -1,11 +1,13 @@
 use anyhow::Result;
 use ratatui::widgets::ScrollbarState;
 
-use super::{SortMode, Tab, TimeFilter, TuiApp};
+use crate::models::{SessionUsage, TokenUsageTotals};
+
+use super::{SortMode, Tab, TuiApp};
 
 impl TuiApp {
     pub(crate) fn refresh_data(&mut self) -> Result<()> {
-        self.status_message = Some("Filters reset to original data".to_string());
+        self.status_message = Some("Loaded data reset".to_string());
 
         // Reset to original data (does not re-read from disk)
         self.daily_report = self.original_daily_report.clone();
@@ -33,41 +35,20 @@ impl TuiApp {
         self.status_message = Some(format!("\u{1f4ca} Sorted by: {}", mode_str));
     }
 
-    pub(crate) fn cycle_time_filter(&mut self) {
-        self.time_filter = match self.time_filter {
-            TimeFilter::All => TimeFilter::Today,
-            TimeFilter::Today => TimeFilter::LastWeek,
-            TimeFilter::LastWeek => TimeFilter::LastMonth,
-            TimeFilter::LastMonth => TimeFilter::All,
-        };
-        self.apply_filters();
-        let filter_str = match self.time_filter {
-            TimeFilter::All => "All Time",
-            TimeFilter::Today => "Today",
-            TimeFilter::LastWeek => "Last Week",
-            TimeFilter::LastMonth => "Last Month",
-        };
-        self.status_message = Some(format!("\u{1f4c5} Filter: {}", filter_str));
-    }
-
     pub(crate) fn apply_filters(&mut self) {
         // Reset to original data
         self.daily_report = self.original_daily_report.clone();
         self.session_report = self.original_session_report.clone();
 
-        // Apply search filter only (skip time filter for now)
         if !self.search_query.is_empty() {
+            let query = self.search_query.to_lowercase();
             self.session_report.sessions.retain(|session| {
-                session
-                    .project_path
-                    .to_lowercase()
-                    .contains(&self.search_query.to_lowercase())
-                    || session
-                        .session_id
-                        .to_lowercase()
-                        .contains(&self.search_query.to_lowercase())
+                session.project_path.to_lowercase().contains(&query)
+                    || session.session_id.to_lowercase().contains(&query)
             });
         }
+
+        self.session_report.totals = session_totals(&self.session_report.sessions);
 
         // Sort both daily and sessions
         match self.sort_mode {
@@ -92,32 +73,20 @@ impl TuiApp {
             SortMode::Tokens => {
                 self.daily_report
                     .daily
-                    .sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+                    .sort_by_key(|entry| std::cmp::Reverse(entry.total_tokens));
                 self.session_report
                     .sessions
-                    .sort_by(|a, b| b.total_tokens.cmp(&a.total_tokens));
+                    .sort_by_key(|entry| std::cmp::Reverse(entry.total_tokens));
             }
             SortMode::Efficiency => {
-                let cache_rate = |cr: u64, cc: u64, inp: u64| -> f64 {
-                    let denom = cr + cc + inp;
-                    if denom == 0 {
-                        0.0
-                    } else {
-                        cr as f64 / denom as f64
-                    }
-                };
                 self.daily_report.daily.sort_by(|a, b| {
-                    let ra =
-                        cache_rate(a.cache_read_tokens, a.cache_creation_tokens, a.input_tokens);
-                    let rb =
-                        cache_rate(b.cache_read_tokens, b.cache_creation_tokens, b.input_tokens);
+                    let ra = Self::tokens_per_dollar(a.total_tokens, a.total_cost);
+                    let rb = Self::tokens_per_dollar(b.total_tokens, b.total_cost);
                     rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
                 });
                 self.session_report.sessions.sort_by(|a, b| {
-                    let ra =
-                        cache_rate(a.cache_read_tokens, a.cache_creation_tokens, a.input_tokens);
-                    let rb =
-                        cache_rate(b.cache_read_tokens, b.cache_creation_tokens, b.input_tokens);
+                    let ra = Self::tokens_per_dollar(a.total_tokens, a.total_cost);
+                    let rb = Self::tokens_per_dollar(b.total_tokens, b.total_cost);
                     rb.partial_cmp(&ra).unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
@@ -182,10 +151,52 @@ impl TuiApp {
         match self.current_tab {
             Tab::Daily => self.daily_table_state.selected(),
             Tab::Weekly => self.weekly_table_state.selected(),
+            Tab::Models => self.model_table_state.selected(),
             Tab::Sessions => self.session_table_state.selected(),
             Tab::BillingBlocks => self.billing_blocks_table_state.selected(),
             Tab::Cache => self.cache_table_state.selected(),
             _ => None,
         }
+    }
+}
+
+fn session_totals(entries: &[SessionUsage]) -> TokenUsageTotals {
+    entries.iter().fold(empty_totals(), |mut totals, entry| {
+        add_totals(
+            &mut totals,
+            &TokenUsageTotals {
+                input_tokens: entry.input_tokens,
+                output_tokens: entry.output_tokens,
+                cache_creation_tokens: entry.cache_creation_tokens,
+                cache_read_tokens: entry.cache_read_tokens,
+                total_tokens: entry.total_tokens,
+                total_cost: entry.total_cost,
+            },
+        );
+        totals
+    })
+}
+
+fn add_totals(totals: &mut TokenUsageTotals, usage: &TokenUsageTotals) {
+    totals.input_tokens = totals.input_tokens.saturating_add(usage.input_tokens);
+    totals.output_tokens = totals.output_tokens.saturating_add(usage.output_tokens);
+    totals.cache_creation_tokens = totals
+        .cache_creation_tokens
+        .saturating_add(usage.cache_creation_tokens);
+    totals.cache_read_tokens = totals
+        .cache_read_tokens
+        .saturating_add(usage.cache_read_tokens);
+    totals.total_tokens = totals.total_tokens.saturating_add(usage.total_tokens);
+    totals.total_cost += usage.total_cost;
+}
+
+fn empty_totals() -> TokenUsageTotals {
+    TokenUsageTotals {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_creation_tokens: 0,
+        cache_read_tokens: 0,
+        total_tokens: 0,
+        total_cost: 0.0,
     }
 }

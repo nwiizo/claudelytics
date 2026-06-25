@@ -1,13 +1,14 @@
-//! Claudelytics - Claude Code Usage Analytics Tool
+//! Claudelytics - Claude Code and Codex Usage Analytics Tool
 //!
-//! A fast CLI tool for analyzing Claude Code usage patterns, token consumption, and costs.
-//! Parses JSONL files from ~/.claude/projects/ and generates comprehensive reports.
+//! A fast CLI tool for analyzing AI coding usage patterns, token consumption, and costs.
+//! Parses Claude Code and Codex JSONL files and generates comprehensive reports.
 
 // Module declarations
 mod billing_blocks;
 mod burn_rate;
 mod cache_analysis;
 mod claude_sessions;
+mod codex_usage;
 mod config;
 mod config_v2;
 mod conversation_display;
@@ -45,18 +46,19 @@ use clap::{Parser, Subcommand, ValueEnum};
 use config::Config;
 use display::{
     display_billing_blocks_responsive, display_daily_report_enhanced,
-    display_daily_report_responsive, display_daily_report_table, display_model_breakdown_report,
-    display_monthly_report_enhanced, display_monthly_report_table, display_report_json,
-    display_session_report_enhanced, display_session_report_responsive,
-    display_session_report_table, print_error, print_info, print_warning,
+    display_daily_report_responsive, display_daily_report_table, display_monthly_report_enhanced,
+    display_monthly_report_table, display_report_json, display_session_report_enhanced,
+    display_session_report_responsive, display_session_report_table, print_error, print_info,
+    print_warning,
 };
 use export::{export_daily_to_csv, export_sessions_to_csv, export_summary_to_csv};
-use models::SessionUsageMap;
+use models::{ModelReport, SessionUsageMap, TokenUsageTotals};
 use parser::UsageParser;
 use projections::ProjectionCalculator;
 use reports::{
     SortField as ReportSortField, SortOrder as ReportSortOrder, generate_daily_report_sorted,
-    generate_monthly_report_sorted, generate_session_report_sorted,
+    generate_model_report_from_sources, generate_monthly_report_sorted,
+    generate_session_report_sorted,
 };
 use session_blocks::{SessionBlockConfig, SessionBlockManager};
 use state::{TuiMode, TuiSessionState};
@@ -127,12 +129,10 @@ pub enum SortField {
 
 #[derive(Parser)]
 #[command(name = "claudelytics")]
-#[command(
-    about = "Claude Code usage analytics tool - Analyze token usage, costs, and session patterns"
-)]
+#[command(about = "Claude Code and Codex analytics - Audit token usage, costs, and sessions")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(
-    long_about = "Claudelytics analyzes Claude Code usage patterns and costs by parsing JSONL files from ~/.claude/projects/.
+    long_about = "Claudelytics audits Claude Code and Codex usage and costs from their local JSONL logs.
 
 EXAMPLES:
   claudelytics                    # Today's usage (compact table)
@@ -159,7 +159,7 @@ struct Cli {
         long,
         value_name = "DATE",
         help = "Filter from date (YYYYMMDD)",
-        long_help = "Filter usage data from this date onwards. Format: YYYYMMDD\nExample: --since 20240101 (January 1, 2024)\nCombine with --until for date ranges: --since 20240101 --until 20240131"
+        long_help = "Filter usage data from this date onwards. Formats: YYYYMMDD or YYYY-MM-DD\nExample: --since 20240101 or --since 2024-01-01\nCombine with --until for date ranges: --since 2024-01-01 --until 2024-01-31"
     )]
     since: Option<String>,
 
@@ -168,7 +168,7 @@ struct Cli {
         long,
         value_name = "DATE",
         help = "Filter until date (YYYYMMDD)",
-        long_help = "Filter usage data up to this date. Format: YYYYMMDD\nExample: --until 20241231 (December 31, 2024)\nUse alone for 'up to date' or combine with --since for ranges"
+        long_help = "Filter usage data up to this date. Formats: YYYYMMDD or YYYY-MM-DD\nExample: --until 20241231 or --until 2024-12-31\nUse alone for 'up to date' or combine with --since for ranges"
     )]
     until: Option<String>,
 
@@ -230,25 +230,49 @@ struct Cli {
     #[arg(
         long,
         value_name = "MODEL",
-        help = "Filter by model type (opus, sonnet, haiku)",
-        long_help = "Filter usage data by specific Claude model types\nOptions: opus, sonnet, haiku, or specific model names\nExamples:\n  --model-filter opus     # Show only Opus model usage\n  --model-filter sonnet   # Show only Sonnet model usage\n  --model-filter claude-opus-4-20250514  # Specific model version"
+        help = "Filter by model or family (fable, opus, sonnet, haiku, openai)",
+        long_help = "Filter usage data by model family, alias, or full model name\nExamples:\n  --model-filter fable    # Show only Fable usage\n  --model-filter openai   # Show only Codex/OpenAI usage\n  --model-filter gpt-5.6  # GPT-5.6 Sol (provider default)\n  --model-filter claude-fable-5  # Specific model"
     )]
     model_filter: Option<String>,
 
     #[arg(
         long,
+        value_name = "PROJECT",
+        help = "Filter Claude Code usage by project path substring",
+        long_help = "Filter usage data to a specific Claude Code project or path substring.\nMatches the encoded project directory and full session path.\nExample: claudelytics --project myproject daily"
+    )]
+    project: Option<String>,
+
+    #[arg(
+        long,
+        value_name = "TZ",
+        default_value = "local",
+        help = "Timezone for date grouping (IANA name, e.g. UTC or Asia/Tokyo)",
+        long_help = "Timezone used when grouping timestamps into daily, weekly, and monthly reports.\nUse IANA names such as UTC, Asia/Tokyo, or America/Los_Angeles.\nDefault: local, using TZ when set and UTC as a portable fallback."
+    )]
+    timezone: String,
+
+    #[arg(
+        long,
         help = "List all known models and exit",
-        long_help = "Display all registered Claude models with their families and aliases\nUseful for seeing what models are available for filtering"
+        long_help = "Display all registered Claude and OpenAI models with families and aliases\nUseful for seeing what models are available for filtering"
     )]
     list_models: bool,
 
     #[arg(
         long,
         help = "Show usage breakdown by model family",
-        long_help = "Automatically categorize and display usage by model families (Opus, Sonnet, Haiku)\nShows cost and token usage for each model type in a single view\nCombines with other filters: --today, --since, --until",
+        long_help = "Display usage by source and model family (Fable, Opus, Sonnet, Haiku, OpenAI)\nShows cost and token usage for each model type in a single view\nCombines with other filters: --today, --since, --until",
         hide = true
     )]
     by_model: bool,
+
+    #[arg(
+        long,
+        help = "Show usage breakdown by model family",
+        long_help = "Alias for --by-model, matching ccusage's --breakdown option."
+    )]
+    breakdown: bool,
 
     #[arg(
         long,
@@ -335,7 +359,7 @@ enum Commands {
     },
     #[command(about = "Launch terminal user interface")]
     #[command(
-        long_about = "Launch interactive terminal user interface\n\nFull-featured TUI with multiple tabs, navigation, and visual charts.\nProvides comprehensive analysis in a terminal-based interface.\n\nFEATURES:\n  - Multiple tabs: Overview, Daily, Sessions, Charts, Help\n  - Keyboard navigation (j/k, arrows, Enter, Tab)\n  - Visual elements: gauges, charts, formatted tables\n  - Search and filtering capabilities\n  - Real-time data display\n\nKEYBOARD SHORTCUTS:\n  q/Esc: Quit  Tab: Next tab  j/k: Navigate  Enter: Select\n\nEXAMPLE:\n  claudelytics tui                      # Launch TUI"
+        long_about = "Launch interactive terminal user interface\n\nFull-featured TUI for auditing Claude Code and Codex usage in the loaded scope.\n\nVIEWS:\n  - Overview, Daily, Weekly, Models, Sessions, Cache, Billing, Help\n  - Source-aware token, cost, model, and cache accounting\n  - Responsive tables for narrow and wide terminals\n\nKEYBOARD SHORTCUTS:\n  1-7/h: Select view  Tab/Shift+Tab: Cycle views\n  j/k or arrows: Navigate  /: Search  s: Sort  e: Export\n  q/Esc: Quit\n\nSet the loaded time range before launch with --today, --since, or --until.\n\nEXAMPLE:\n  claudelytics tui                      # Launch TUI"
     )]
     Tui,
     // #[command(about = "Launch analytics studio TUI")]
@@ -456,6 +480,11 @@ enum Commands {
         )]
         date: Option<String>,
     },
+    #[command(about = "Show compact status line for shell hooks")]
+    #[command(
+        long_about = "Display a compact one-line usage summary suitable for Claude Code status hooks.\n\nEXAMPLES:\n  claudelytics statusline\n  claudelytics --json statusline"
+    )]
+    Statusline,
     #[command(about = "Show billing blocks (5-hour usage blocks)")]
     #[command(
         long_about = "Display usage organized by Claude's 5-hour billing blocks\n\nClaude uses 5-hour billing blocks for tracking usage. This command\nshows your usage patterns aligned with these actual billing periods.\n\nBILLING BLOCKS:\n  00:00-05:00 UTC  (Block 1)\n  05:00-10:00 UTC  (Block 2)\n  10:00-15:00 UTC  (Block 3)\n  15:00-20:00 UTC  (Block 4)\n  20:00-00:00 UTC  (Block 5)\n\nFEATURES:\n  - Shows usage within each 5-hour block\n  - Identifies peak usage periods\n  - Calculates average usage per block\n  - Displays usage patterns by time of day\n\nEXAMPLES:\n  claudelytics billing-blocks           # Show all billing blocks\n  claudelytics billing-blocks --today   # Today's blocks only\n  claudelytics billing-blocks --json    # JSON output\n  claudelytics --since 20240301 billing-blocks # From specific date"
@@ -1036,22 +1065,24 @@ fn run() -> Result<()> {
     };
 
     // Handle date shortcut flags: today > last_7d > last_30d > explicit
+    let report_timezone = parser::parse_timezone(Some(&cli.timezone))?;
+    let report_today = chrono::Utc::now()
+        .with_timezone(&report_timezone)
+        .date_naive();
     let (since_date, until_date) = if cli.today {
-        let today = Local::now().date_naive().format("%Y%m%d").to_string();
+        let today = report_today.format("%Y%m%d").to_string();
         (Some(today.clone()), Some(today))
     } else if cli.last_7d {
-        let today = Local::now().date_naive();
-        let since = (today - chrono::Duration::days(6))
+        let since = (report_today - chrono::Duration::days(6))
             .format("%Y%m%d")
             .to_string();
-        let until = today.format("%Y%m%d").to_string();
+        let until = report_today.format("%Y%m%d").to_string();
         (Some(since), Some(until))
     } else if cli.last_30d {
-        let today = Local::now().date_naive();
-        let since = (today - chrono::Duration::days(29))
+        let since = (report_today - chrono::Duration::days(29))
             .format("%Y%m%d")
             .to_string();
-        let until = today.format("%Y%m%d").to_string();
+        let until = report_today.format("%Y%m%d").to_string();
         (Some(since), Some(until))
     } else {
         (cli.since, cli.until)
@@ -1069,9 +1100,9 @@ fn run() -> Result<()> {
 
     // Validate at least one Claude directory exists
     let any_dir_exists = claude_dirs.iter().any(|d| d.exists());
-    if !any_dir_exists {
+    if !any_dir_exists && !codex_usage::has_codex_usage() {
         anyhow::bail!(
-            "Claude directory not found at {}\nHint: Make sure Claude Code is installed and has been used at least once.\nSearched: {}",
+            "No Claude or Codex usage data found.\nHint: Make sure Claude Code or Codex has been used at least once.\nPrimary Claude dir: {}\nClaude searched: {}\nCodex searched: CODEX_HOME or ~/.codex",
             claude_dir.display(),
             claude_dirs
                 .iter()
@@ -1082,12 +1113,14 @@ fn run() -> Result<()> {
     }
 
     // Create parser with all discovered directories
-    let parser = UsageParser::new_multi(
+    let parser = UsageParser::new_multi_with_options(
         claude_dirs.clone(),
         since_date.clone(),
         until_date.clone(),
         cli.model_filter.clone(),
         cli.cost_mode.into(),
+        Some(cli.timezone.clone()),
+        cli.project.clone(),
     )?;
 
     // Cache stats reads a single session file directly and should not depend on
@@ -1095,11 +1128,72 @@ fn run() -> Result<()> {
     if let Some(Commands::CacheStats { session_id }) = &cli.command {
         return handle_cache_stats_command(&claude_dirs, session_id, cli.json);
     }
-    // Parse all usage data
-    let (daily_map, session_map, billing_manager) = parser.parse_all()?;
+    let is_tui_command = cli.tui || matches!(&cli.command, Some(Commands::Tui));
+    let show_default_agent_breakdown = cli.command.is_none() && !cli.tui && !cli.json;
+    let needs_model_report = cli.by_model || cli.breakdown || show_default_agent_breakdown;
+
+    let (mut daily_map, mut session_map, billing_manager, mut model_source_map) =
+        if needs_model_report {
+            let (daily_map, session_map, billing_manager, claude_models) =
+                parser.parse_all_with_models()?;
+            let model_source_map: std::collections::HashMap<(String, String), models::TokenUsage> =
+                claude_models
+                    .into_iter()
+                    .map(|(model, usage)| (("Claude Code".to_string(), model), usage))
+                    .collect();
+
+            (daily_map, session_map, billing_manager, model_source_map)
+        } else {
+            let (daily_map, session_map, billing_manager) = parser.parse_all()?;
+            (
+                daily_map,
+                session_map,
+                billing_manager,
+                std::collections::HashMap::new(),
+            )
+        };
+
+    match codex_usage::parse_codex_usage(
+        since_date.as_deref(),
+        until_date.as_deref(),
+        Some(&cli.timezone),
+        cli.model_filter.as_deref(),
+        !matches!(cli.cost_mode, CliCostMode::Display),
+    ) {
+        Ok(codex_data) => {
+            for warning in &codex_data.warnings {
+                print_warning(&format!("Partial Codex audit: {warning}"));
+            }
+            for (date, usage) in codex_data.daily {
+                daily_map.entry(date).or_default().add(&usage);
+            }
+            for (session_id, (usage, last_activity)) in codex_data.sessions {
+                let session = session_map
+                    .entry(session_id)
+                    .or_insert_with(|| (models::TokenUsage::default(), last_activity));
+                session.0.add(&usage);
+                if last_activity > session.1 {
+                    session.1 = last_activity;
+                }
+            }
+            if needs_model_report {
+                for (key, usage) in codex_data.models {
+                    model_source_map.entry(key).or_default().add(&usage);
+                }
+            }
+        }
+        Err(error) if codex_usage::has_codex_usage() => {
+            print_warning(&format!("Could not audit Codex usage: {error}"));
+        }
+        Err(_) => {}
+    }
 
     // Check if we have any data
-    if daily_map.is_empty() && session_map.is_empty() {
+    if daily_map.is_empty()
+        && session_map.is_empty()
+        && !is_tui_command
+        && (!needs_model_report || model_source_map.is_empty())
+    {
         if let Some(Commands::BudgetStatus { budget }) = &cli.command {
             let empty_daily_report = crate::models::DailyReport {
                 daily: Vec::new(),
@@ -1126,6 +1220,11 @@ fn run() -> Result<()> {
     // Generate default reports
     let mut daily_report = generate_daily_report_sorted(daily_map, None, None);
     let mut session_report = generate_session_report_sorted(session_map, None, None);
+    let model_report = if needs_model_report {
+        generate_model_report_from_sources(std::mem::take(&mut model_source_map))
+    } else {
+        empty_model_report()
+    };
 
     // Handle export command
     if let Some(Commands::Export {
@@ -1149,6 +1248,10 @@ fn run() -> Result<()> {
     // Handle cost command
     if let Some(Commands::Cost { today, date }) = &cli.command {
         return handle_cost_command(&daily_report, *today, date.as_deref());
+    }
+
+    if let Some(Commands::Statusline) = &cli.command {
+        return handle_statusline_command(&daily_report, &billing_manager, cli.json);
     }
 
     // Handle debug state command
@@ -1177,14 +1280,27 @@ fn run() -> Result<()> {
     }
 
     // Handle --by-model flag
-    if cli.by_model {
-        display_model_breakdown_report(&daily_map_clone, &session_map_clone);
-        return Ok(());
+    if cli.by_model || cli.breakdown {
+        return handle_model_report_command(&model_report, cli.json);
     }
 
     // Handle TUI flag or command
     if cli.tui {
-        let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
+        let mut tui_app = TuiApp::new(
+            daily_report,
+            session_report,
+            model_report.clone(),
+            billing_manager.clone(),
+        );
+        tui_app.set_model_report_receiver(spawn_model_report_loader(
+            claude_dirs.clone(),
+            since_date.clone(),
+            until_date.clone(),
+            cli.model_filter.clone(),
+            cli.cost_mode,
+            cli.timezone.clone(),
+            cli.project.clone(),
+        ));
 
         // Try to restore previous session state
         if let Ok(state) = TuiSessionState::load()
@@ -1234,6 +1350,11 @@ fn run() -> Result<()> {
                 display_daily_report_enhanced(&daily_report, cli.compact);
             } else {
                 display::display_daily_report_compact(&daily_report);
+            }
+
+            if show_default_agent_breakdown {
+                println!();
+                display_default_agent_model_summary(&model_report);
             }
 
             // Show real-time analytics if requested
@@ -1348,7 +1469,21 @@ fn run() -> Result<()> {
             }
         }
         Commands::Tui => {
-            let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
+            let mut tui_app = TuiApp::new(
+                daily_report,
+                session_report,
+                model_report.clone(),
+                billing_manager.clone(),
+            );
+            tui_app.set_model_report_receiver(spawn_model_report_loader(
+                claude_dirs.clone(),
+                since_date.clone(),
+                until_date.clone(),
+                cli.model_filter.clone(),
+                cli.cost_mode,
+                cli.timezone.clone(),
+                cli.project.clone(),
+            ));
 
             // Try to restore previous session state
             if let Ok(state) = TuiSessionState::load()
@@ -1597,10 +1732,367 @@ fn run() -> Result<()> {
         Commands::BudgetStatus { budget } => {
             handle_budget_status_command(&daily_report, budget, cli.json)?;
         }
+        Commands::Statusline => {
+            handle_statusline_command(&daily_report, &billing_manager, cli.json)?;
+        }
         _ => {} // Other commands handled above
     }
 
     Ok(())
+}
+
+fn spawn_model_report_loader(
+    claude_dirs: Vec<PathBuf>,
+    since_date: Option<String>,
+    until_date: Option<String>,
+    model_filter: Option<String>,
+    cost_mode: CliCostMode,
+    timezone: String,
+    project: Option<String>,
+) -> std::sync::mpsc::Receiver<std::result::Result<ModelReport, String>> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+
+    std::thread::spawn(move || {
+        let result = load_model_report(
+            claude_dirs,
+            since_date,
+            until_date,
+            model_filter,
+            cost_mode,
+            timezone,
+            project,
+        )
+        .map_err(|error| error.to_string());
+        let _ = sender.send(result);
+    });
+
+    receiver
+}
+
+fn load_model_report(
+    claude_dirs: Vec<PathBuf>,
+    since_date: Option<String>,
+    until_date: Option<String>,
+    model_filter: Option<String>,
+    cost_mode: CliCostMode,
+    timezone: String,
+    project: Option<String>,
+) -> Result<ModelReport> {
+    let parser = UsageParser::new_multi_with_options(
+        claude_dirs,
+        since_date.clone(),
+        until_date.clone(),
+        model_filter.clone(),
+        cost_mode.into(),
+        Some(timezone.clone()),
+        project,
+    )?;
+    let (_, _, _, claude_models) = parser.parse_all_with_models()?;
+    let mut model_source_map: std::collections::HashMap<(String, String), models::TokenUsage> =
+        claude_models
+            .into_iter()
+            .map(|(model, usage)| (("Claude Code".to_string(), model), usage))
+            .collect();
+
+    match codex_usage::parse_codex_model_usage(
+        since_date.as_deref(),
+        until_date.as_deref(),
+        Some(&timezone),
+        model_filter.as_deref(),
+        !matches!(cost_mode, CliCostMode::Display),
+    ) {
+        Ok(codex_models) => {
+            for (key, usage) in codex_models {
+                model_source_map.entry(key).or_default().add(&usage);
+            }
+        }
+        Err(error) if codex_usage::has_codex_usage() => {
+            print_warning(&format!("Could not audit Codex model usage: {error}"));
+        }
+        Err(_) => {}
+    }
+
+    Ok(generate_model_report_from_sources(model_source_map))
+}
+
+fn handle_model_report_command(model_report: &ModelReport, json: bool) -> Result<()> {
+    if json {
+        display_report_json(model_report);
+        return Ok(());
+    }
+
+    if model_report.models.is_empty() {
+        print_warning("No model usage data found for the specified criteria");
+        return Ok(());
+    }
+
+    let mut table = comfy_table::Table::new();
+    table.load_preset(comfy_table::presets::ASCII_FULL);
+    table.set_header(vec![
+        "Agent", "Family", "Model", "Cost", "Share", "$/1M", "Tokens", "Cache W", "Cache R", "Hit%",
+    ]);
+
+    for model in &model_report.models {
+        let cost_share = if model_report.totals.total_cost > 0.0 {
+            (model.total_cost / model_report.totals.total_cost) * 100.0
+        } else {
+            0.0
+        };
+        let hit_pct = model_cache_hit_rate_pct(
+            &model.agent,
+            model.input_tokens,
+            model.cache_read_tokens,
+            model.cache_creation_tokens,
+        );
+        let cost_per_million = cost_per_million_tokens(model.total_cost, model.total_tokens);
+
+        table.add_row(vec![
+            model.agent.clone(),
+            model.family.clone(),
+            model.model.clone(),
+            format_cli_cost(model.total_cost),
+            format!("{cost_share:.1}%"),
+            format_cli_cost(cost_per_million),
+            format_cli_number(model.total_tokens),
+            format_cache_write(&model.agent, model.cache_creation_tokens),
+            format_cli_number(model.cache_read_tokens),
+            format!("{hit_pct:.1}%"),
+        ]);
+    }
+    table.add_row(vec![
+        "TOTAL".to_string(),
+        "—".to_string(),
+        "All models".to_string(),
+        format_cli_cost(model_report.totals.total_cost),
+        "100.0%".to_string(),
+        format_cli_cost(cost_per_million_tokens(
+            model_report.totals.total_cost,
+            model_report.totals.total_tokens,
+        )),
+        format_cli_number(model_report.totals.total_tokens),
+        format_cli_number(model_report.totals.cache_creation_tokens),
+        format_cli_number(model_report.totals.cache_read_tokens),
+        "—".to_string(),
+    ]);
+
+    println!("Usage by Agent and Model");
+    println!("{table}");
+
+    Ok(())
+}
+
+#[derive(Default)]
+struct AgentUsageSummary {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_creation_tokens: u64,
+    cache_read_tokens: u64,
+    total_tokens: u64,
+    total_cost: f64,
+    models: usize,
+}
+
+impl AgentUsageSummary {
+    fn add_model(&mut self, model: &models::ModelUsage) {
+        self.input_tokens = self.input_tokens.saturating_add(model.input_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(model.output_tokens);
+        self.cache_creation_tokens = self
+            .cache_creation_tokens
+            .saturating_add(model.cache_creation_tokens);
+        self.cache_read_tokens = self
+            .cache_read_tokens
+            .saturating_add(model.cache_read_tokens);
+        self.total_tokens = self.total_tokens.saturating_add(model.total_tokens);
+        self.total_cost += model.total_cost;
+        self.models += 1;
+    }
+}
+
+fn display_default_agent_model_summary(model_report: &ModelReport) {
+    print!("{}", render_default_agent_model_summary(model_report));
+}
+
+fn render_default_agent_model_summary(model_report: &ModelReport) -> String {
+    let summaries = summarize_model_report(model_report);
+
+    let mut agent_table = comfy_table::Table::new();
+    agent_table.load_preset(comfy_table::presets::ASCII_FULL);
+    agent_table.set_header(vec![
+        "Agent",
+        "Cost",
+        "Tokens",
+        "Models",
+        "Input",
+        "Output",
+        "Cache Write",
+        "Cache Read",
+    ]);
+    for (agent, summary) in &summaries {
+        agent_table.add_row(vec![
+            agent.clone(),
+            format_cli_cost(summary.total_cost),
+            format_cli_number(summary.total_tokens),
+            summary.models.to_string(),
+            format_cli_number(summary.input_tokens),
+            format_cli_number(summary.output_tokens),
+            format_cache_write(agent, summary.cache_creation_tokens),
+            format_cli_number(summary.cache_read_tokens),
+        ]);
+    }
+    agent_table.add_row(vec![
+        "TOTAL".to_string(),
+        format_cli_cost(model_report.totals.total_cost),
+        format_cli_number(model_report.totals.total_tokens),
+        model_report.models.len().to_string(),
+        format_cli_number(model_report.totals.input_tokens),
+        format_cli_number(model_report.totals.output_tokens),
+        format_cli_number(model_report.totals.cache_creation_tokens),
+        format_cli_number(model_report.totals.cache_read_tokens),
+    ]);
+
+    if model_report.models.is_empty() {
+        return format!(
+            "No model usage found in the loaded scope.\n\nUsage by agent\n{agent_table}\n"
+        );
+    }
+
+    let mut models: Vec<_> = model_report.models.iter().collect();
+    models.sort_by(|left, right| {
+        left.agent.cmp(&right.agent).then_with(|| {
+            right
+                .total_cost
+                .partial_cmp(&left.total_cost)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    });
+    let mut model_table = comfy_table::Table::new();
+    model_table.load_preset(comfy_table::presets::ASCII_FULL);
+    model_table.set_header(vec![
+        "Agent",
+        "Model",
+        "Cost",
+        "Tokens",
+        "Input",
+        "Output",
+        "Cache Write",
+        "Cache Read",
+    ]);
+    for model in models {
+        model_table.add_row(vec![
+            model.agent.clone(),
+            model.model.clone(),
+            format_cli_cost(model.total_cost),
+            format_cli_number(model.total_tokens),
+            format_cli_number(model.input_tokens),
+            format_cli_number(model.output_tokens),
+            format_cache_write(&model.agent, model.cache_creation_tokens),
+            format_cli_number(model.cache_read_tokens),
+        ]);
+    }
+    model_table.add_row(vec![
+        "TOTAL".to_string(),
+        "All models".to_string(),
+        format_cli_cost(model_report.totals.total_cost),
+        format_cli_number(model_report.totals.total_tokens),
+        format_cli_number(model_report.totals.input_tokens),
+        format_cli_number(model_report.totals.output_tokens),
+        format_cli_number(model_report.totals.cache_creation_tokens),
+        format_cli_number(model_report.totals.cache_read_tokens),
+    ]);
+
+    format!("Usage by model\n{model_table}\n\nUsage by agent\n{agent_table}\n")
+}
+
+fn summarize_model_report(
+    model_report: &ModelReport,
+) -> std::collections::BTreeMap<String, AgentUsageSummary> {
+    let mut summaries = std::collections::BTreeMap::from([
+        ("Claude Code".to_string(), AgentUsageSummary::default()),
+        ("Codex".to_string(), AgentUsageSummary::default()),
+    ]);
+    for model in &model_report.models {
+        summaries
+            .entry(model.agent.clone())
+            .or_default()
+            .add_model(model);
+    }
+    summaries
+}
+
+fn format_cache_write(agent: &str, tokens: u64) -> String {
+    if (agent.eq_ignore_ascii_case("codex") || agent.eq_ignore_ascii_case("openai")) && tokens == 0
+    {
+        "—".to_string()
+    } else {
+        format_cli_number(tokens)
+    }
+}
+
+fn empty_model_report() -> ModelReport {
+    ModelReport {
+        models: Vec::new(),
+        totals: TokenUsageTotals {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_creation_tokens: 0,
+            cache_read_tokens: 0,
+            total_tokens: 0,
+            total_cost: 0.0,
+        },
+    }
+}
+
+fn format_cli_cost(amount: f64) -> String {
+    if amount >= 100.0 {
+        format!("${amount:.2}")
+    } else {
+        format!("${amount:.4}")
+    }
+}
+
+fn format_cli_number(num: u64) -> String {
+    let text = num.to_string();
+    let mut out = String::with_capacity(text.len() + text.len() / 3);
+    for (idx, ch) in text.chars().enumerate() {
+        if idx > 0 && (text.len() - idx).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn model_cache_hit_rate_pct(
+    agent: &str,
+    input_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+) -> f64 {
+    if agent.eq_ignore_ascii_case("codex") || agent.eq_ignore_ascii_case("openai") {
+        let prompt_side_tokens = input_tokens
+            .saturating_add(cache_creation_tokens)
+            .saturating_add(cache_read_tokens);
+        if prompt_side_tokens == 0 {
+            0.0
+        } else {
+            cache_read_tokens as f64 / prompt_side_tokens as f64 * 100.0
+        }
+    } else {
+        let cache_io = cache_read_tokens.saturating_add(cache_creation_tokens);
+        if cache_io == 0 {
+            0.0
+        } else {
+            cache_read_tokens as f64 / cache_io as f64 * 100.0
+        }
+    }
+}
+
+fn cost_per_million_tokens(total_cost: f64, total_tokens: u64) -> f64 {
+    if total_tokens == 0 {
+        0.0
+    } else {
+        total_cost / total_tokens as f64 * 1_000_000.0
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1609,6 +2101,75 @@ struct BudgetStatusOutput {
     burn_rate_per_hour: f64,
     hours_remaining: Option<f64>,
     over_budget: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct StatuslineOutput {
+    today_cost: f64,
+    total_cost: f64,
+    total_tokens: u64,
+    active_block_cost: Option<f64>,
+    active_block_tokens: Option<u64>,
+    active_block_remaining_minutes: Option<i64>,
+}
+
+fn handle_statusline_command(
+    daily_report: &crate::models::DailyReport,
+    billing_manager: &crate::billing_blocks::BillingBlockManager,
+    json: bool,
+) -> Result<()> {
+    let now = chrono::Utc::now();
+    let today = Local::now().date_naive().format("%Y-%m-%d").to_string();
+    let today_cost = daily_report
+        .daily
+        .iter()
+        .find(|d| d.date == today)
+        .map(|d| d.total_cost)
+        .unwrap_or(0.0);
+
+    let active_block = billing_manager.get_current_block();
+    let active_block_cost = active_block.map(|block| block.usage.total_cost);
+    let active_block_tokens = active_block.map(|block| block.usage.total_tokens());
+    let active_block_remaining_minutes =
+        active_block.map(|block| (block.end_time - now).num_minutes().max(0));
+
+    let output = StatuslineOutput {
+        today_cost,
+        total_cost: daily_report.totals.total_cost,
+        total_tokens: daily_report.totals.total_tokens,
+        active_block_cost,
+        active_block_tokens,
+        active_block_remaining_minutes,
+    };
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
+    let block = match (
+        output.active_block_cost,
+        output.active_block_tokens,
+        output.active_block_remaining_minutes,
+    ) {
+        (Some(cost), Some(tokens), Some(minutes)) => format!(
+            "${:.2} block / {} tokens / {}h {}m left",
+            cost,
+            format_number(tokens),
+            minutes / 60,
+            minutes % 60
+        ),
+        _ => "No active block".to_string(),
+    };
+
+    println!(
+        "Claude usage | ${:.2} today / ${:.2} total / {} total tokens / {}",
+        output.today_cost,
+        output.total_cost,
+        format_number(output.total_tokens),
+        block
+    );
+    Ok(())
 }
 
 fn handle_budget_status_command(
@@ -1988,7 +2549,22 @@ fn handle_test_resume_command(
     print_info("🧪 Testing resume functionality...");
 
     // Create a test TUI app and set some state
-    let mut tui_app = TuiApp::new(daily_report, session_report, billing_manager.clone());
+    let mut tui_app = TuiApp::new(
+        daily_report,
+        session_report,
+        crate::models::ModelReport {
+            models: Vec::new(),
+            totals: crate::models::TokenUsageTotals {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 0,
+                total_cost: 0.0,
+            },
+        },
+        billing_manager.clone(),
+    );
 
     // Set some test state
     tui_app.set_current_tab(2); // Sessions tab
@@ -2016,6 +2592,7 @@ fn handle_test_resume_command(
     let mut new_tui_app = TuiApp::new(
         tui_app.get_daily_report().clone(),
         tui_app.get_session_report().clone(),
+        tui_app.model_report.clone(),
         billing_manager.clone(),
     );
     restore_tui_state(&mut new_tui_app, &loaded_state);
@@ -2371,7 +2948,7 @@ fn handle_blocks_command(claude_dir: &Path, options: BlocksCommandOptions) -> Re
     } else {
         // Sort blocks by start time (newest first)
         let mut sorted_blocks = blocks_to_show;
-        sorted_blocks.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        sorted_blocks.sort_by_key(|block| std::cmp::Reverse(block.start_time));
 
         // Display blocks
         for block in sorted_blocks {
@@ -3524,4 +4101,89 @@ fn handle_inspect_command(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::ModelUsage;
+
+    fn sample_model_report() -> ModelReport {
+        ModelReport {
+            models: vec![
+                ModelUsage {
+                    agent: "Claude Code".to_string(),
+                    model: "claude-fable-5".to_string(),
+                    family: "fable".to_string(),
+                    input_tokens: 100,
+                    output_tokens: 20,
+                    cache_creation_tokens: 30,
+                    cache_read_tokens: 40,
+                    total_tokens: 190,
+                    total_cost: 0.5,
+                },
+                ModelUsage {
+                    agent: "Codex".to_string(),
+                    model: "gpt-5.6-sol".to_string(),
+                    family: "openai".to_string(),
+                    input_tokens: 200,
+                    output_tokens: 50,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 80,
+                    total_tokens: 330,
+                    total_cost: 0.25,
+                },
+            ],
+            totals: TokenUsageTotals {
+                input_tokens: 300,
+                output_tokens: 70,
+                cache_creation_tokens: 30,
+                cache_read_tokens: 120,
+                total_tokens: 520,
+                total_cost: 0.75,
+            },
+        }
+    }
+
+    #[test]
+    fn default_summary_keeps_agents_and_cache_directions_separate() {
+        let report = sample_model_report();
+        let summaries = summarize_model_report(&report);
+        let claude = summaries.get("Claude Code").unwrap();
+        let codex = summaries.get("Codex").unwrap();
+        assert_eq!(claude.cache_creation_tokens, 30);
+        assert_eq!(claude.cache_read_tokens, 40);
+        assert_eq!(codex.cache_creation_tokens, 0);
+        assert_eq!(codex.cache_read_tokens, 80);
+        assert_eq!(claude.models, 1);
+        assert_eq!(codex.models, 1);
+        assert_eq!(format_cache_write("Claude Code", 0), "0");
+        assert_eq!(format_cache_write("Codex", 0), "—");
+    }
+
+    #[test]
+    fn default_summary_ends_with_agent_totals() {
+        let rendered = render_default_agent_model_summary(&sample_model_report());
+        let model_position = rendered.find("Usage by model").unwrap();
+        let agent_position = rendered.find("Usage by agent").unwrap();
+
+        assert!(model_position < agent_position);
+
+        let final_section = &rendered[agent_position..];
+        let claude_position = final_section.find("| Claude Code").unwrap();
+        let codex_position = final_section.find("| Codex").unwrap();
+        let total_position = final_section.find("| TOTAL").unwrap();
+        assert!(claude_position < codex_position);
+        assert!(codex_position < total_position);
+
+        let lines: Vec<_> = rendered.trim_end().lines().collect();
+        let total_line = lines
+            .iter()
+            .rposition(|line| line.contains("| TOTAL"))
+            .unwrap();
+        assert_eq!(total_line + 2, lines.len());
+        assert!(lines.last().is_some_and(|line| {
+            line.starts_with('+') && line.ends_with('+') && !line.contains('|')
+        }));
+    }
 }

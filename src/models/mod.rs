@@ -10,8 +10,8 @@ mod types;
 pub use commands::{Command, CommandAction};
 #[allow(unused_imports)]
 pub use reports::{
-    DailyReport, DailyUsage, MonthlyReport, MonthlyUsage, SessionReport, SessionUsage,
-    TokenUsageTotals, WeeklyReport, WeeklyUsage,
+    DailyReport, DailyUsage, ModelReport, ModelUsage, MonthlyReport, MonthlyUsage, SessionReport,
+    SessionUsage, TokenUsageTotals, WeeklyReport, WeeklyUsage,
 };
 #[allow(unused_imports)]
 pub use sessions::{

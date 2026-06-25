@@ -57,17 +57,22 @@ impl TuiApp {
                 ));
             }
             KeyCode::Char('4') => {
+                self.current_tab = Tab::Models;
+                self.visual_effects
+                    .add_toast(ToastNotification::info("Switched to Models".to_string()));
+            }
+            KeyCode::Char('5') => {
                 self.current_tab = Tab::Sessions;
                 self.visual_effects
                     .add_toast(ToastNotification::info("Switched to Sessions".to_string()));
             }
-            KeyCode::Char('5') => {
+            KeyCode::Char('6') => {
                 self.current_tab = Tab::Cache;
                 self.visual_effects.add_toast(ToastNotification::info(
                     "Switched to Cache Analysis".to_string(),
                 ));
             }
-            KeyCode::Char('6') => {
+            KeyCode::Char('7') => {
                 self.current_tab = Tab::BillingBlocks;
                 self.visual_effects.add_toast(ToastNotification::info(
                     "Switched to Billing Blocks".to_string(),
@@ -154,9 +159,6 @@ impl TuiApp {
                 } else {
                     self.cycle_sort_mode();
                 }
-            }
-            KeyCode::Char('f') => {
-                self.cycle_time_filter();
             }
             KeyCode::Char('c') => {
                 self.status_message = None;
@@ -360,35 +362,32 @@ impl TuiApp {
                         0 => self.current_tab = Tab::Overview,
                         1 => self.current_tab = Tab::Daily,
                         2 => self.current_tab = Tab::Weekly,
-                        3 => self.current_tab = Tab::Sessions,
-                        4 => self.current_tab = Tab::Cache,
-                        5 => self.current_tab = Tab::BillingBlocks,
-                        6 => self.current_tab = Tab::Help,
+                        3 => self.current_tab = Tab::Models,
+                        4 => self.current_tab = Tab::Sessions,
+                        5 => self.current_tab = Tab::Cache,
+                        6 => self.current_tab = Tab::BillingBlocks,
+                        7 => self.current_tab = Tab::Help,
                         _ => {}
                     }
                 } else {
-                    match self.current_tab {
-                        Tab::Daily => {
-                            if mouse.row >= 6
-                                && mouse.row <= 6 + self.daily_report.daily.len() as u16
-                            {
-                                let selected_row = (mouse.row - 6) as usize;
-                                if selected_row < self.daily_report.daily.len() {
-                                    self.daily_table_state.select(Some(selected_row));
-                                }
-                            }
+                    let selected_row = mouse.row.checked_sub(6).map(usize::from);
+                    match (self.current_tab, selected_row) {
+                        (Tab::Daily, Some(selected_row))
+                            if selected_row < self.daily_report.daily.len() =>
+                        {
+                            self.daily_table_state.select(Some(selected_row));
                         }
-                        Tab::Sessions => {
-                            if mouse.row >= 6
-                                && mouse.row <= 6 + self.session_report.sessions.len() as u16
-                            {
-                                let selected_row = (mouse.row - 6) as usize;
-                                if selected_row < self.session_report.sessions.len() {
-                                    self.session_table_state.select(Some(selected_row));
-                                    self.session_scroll_state =
-                                        self.session_scroll_state.position(selected_row);
-                                }
-                            }
+                        (Tab::Models, Some(selected_row))
+                            if selected_row < self.model_report.models.len() =>
+                        {
+                            self.model_table_state.select(Some(selected_row));
+                        }
+                        (Tab::Sessions, Some(selected_row))
+                            if selected_row < self.session_report.sessions.len() =>
+                        {
+                            self.session_table_state.select(Some(selected_row));
+                            self.session_scroll_state =
+                                self.session_scroll_state.position(selected_row);
                         }
                         _ => {}
                     }

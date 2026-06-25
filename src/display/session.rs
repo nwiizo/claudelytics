@@ -236,15 +236,9 @@ fn display_enhanced_top_sessions(sessions: &[crate::models::SessionUsage]) {
             0.0
         };
 
-        let cache_percentage = if (session.cache_read_tokens
-            + session.cache_creation_tokens
-            + session.input_tokens)
-            > 0
-        {
-            session.cache_read_tokens as f64
-                / (session.cache_read_tokens + session.cache_creation_tokens + session.input_tokens)
-                    as f64
-                * 100.0
+        let cache_io = session.cache_read_tokens + session.cache_creation_tokens;
+        let cache_percentage = if cache_io > 0 {
+            session.cache_read_tokens as f64 / cache_io as f64 * 100.0
         } else {
             0.0
         };

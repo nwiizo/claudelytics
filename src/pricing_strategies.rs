@@ -1,5 +1,6 @@
 use crate::domain::{Cost, CostCalculator, ModelName, PricingModel, TokenUsage};
 use crate::error::{ClaudelyticsError, Result};
+use crate::pricing::{canonical_model_name, get_fallback_pricing};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -19,97 +20,25 @@ impl FallbackPricingStrategy {
     }
 
     fn create_default_pricing() -> HashMap<String, PricingModel> {
-        let mut pricing = HashMap::new();
-
-        // Claude 4 Opus (2025年の最新モデル)
-        pricing.insert(
-            "claude-opus-4-20250514".to_string(),
-            PricingModel {
-                input_cost_per_token: 15.0 / 1_000_000.0,
-                output_cost_per_token: 75.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 18.75 / 1_000_000.0,
-                cache_read_cost_per_token: 1.5 / 1_000_000.0,
-            },
-        );
-
-        // Claude 4 Sonnet
-        pricing.insert(
-            "claude-sonnet-4-20250514".to_string(),
-            PricingModel {
-                input_cost_per_token: 3.0 / 1_000_000.0,
-                output_cost_per_token: 15.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 3.75 / 1_000_000.0,
-                cache_read_cost_per_token: 0.3 / 1_000_000.0,
-            },
-        );
-
-        // Claude 3.5 Sonnet
-        pricing.insert(
-            "claude-3-5-sonnet-20241022".to_string(),
-            PricingModel {
-                input_cost_per_token: 3.0 / 1_000_000.0,
-                output_cost_per_token: 15.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 3.75 / 1_000_000.0,
-                cache_read_cost_per_token: 0.3 / 1_000_000.0,
-            },
-        );
-
-        // Claude 3.5 Haiku
-        pricing.insert(
-            "claude-3-5-haiku-20241022".to_string(),
-            PricingModel {
-                input_cost_per_token: 0.8 / 1_000_000.0,
-                output_cost_per_token: 4.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 1.0 / 1_000_000.0,
-                cache_read_cost_per_token: 0.08 / 1_000_000.0,
-            },
-        );
-
-        // Claude 3 Opus
-        pricing.insert(
-            "claude-3-opus-20240229".to_string(),
-            PricingModel {
-                input_cost_per_token: 15.0 / 1_000_000.0,
-                output_cost_per_token: 75.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 18.75 / 1_000_000.0,
-                cache_read_cost_per_token: 1.5 / 1_000_000.0,
-            },
-        );
-
-        // Claude Opus 4.6
-        pricing.insert(
-            "claude-opus-4-6-20260310".to_string(),
-            PricingModel {
-                input_cost_per_token: 15.0 / 1_000_000.0,
-                output_cost_per_token: 75.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 18.75 / 1_000_000.0,
-                cache_read_cost_per_token: 1.5 / 1_000_000.0,
-            },
-        );
-
-        // Claude Sonnet 4.6
-        pricing.insert(
-            "claude-sonnet-4-6-20260310".to_string(),
-            PricingModel {
-                input_cost_per_token: 3.0 / 1_000_000.0,
-                output_cost_per_token: 15.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 3.75 / 1_000_000.0,
-                cache_read_cost_per_token: 0.3 / 1_000_000.0,
-            },
-        );
-
-        // Claude Haiku 4.5
-        pricing.insert(
-            "claude-haiku-4-5-20251001".to_string(),
-            PricingModel {
-                input_cost_per_token: 0.8 / 1_000_000.0,
-                output_cost_per_token: 4.0 / 1_000_000.0,
-                cache_creation_cost_per_token: 1.0 / 1_000_000.0,
-                cache_read_cost_per_token: 0.08 / 1_000_000.0,
-            },
-        );
-
-        pricing
+        get_fallback_pricing()
+            .into_iter()
+            .filter(|(name, _)| !name.starts_with("__"))
+            .map(|(name, pricing)| {
+                (
+                    name,
+                    PricingModel {
+                        input_cost_per_token: pricing.input_cost_per_token.unwrap_or_default(),
+                        output_cost_per_token: pricing.output_cost_per_token.unwrap_or_default(),
+                        cache_creation_cost_per_token: pricing
+                            .cache_creation_input_token_cost
+                            .unwrap_or_default(),
+                        cache_read_cost_per_token: pricing
+                            .cache_read_input_token_cost
+                            .unwrap_or_default(),
+                    },
+                )
+            })
+            .collect()
     }
 
     fn find_model_pricing(&self, model_name: &str) -> Option<&PricingModel> {
@@ -118,28 +47,19 @@ impl FallbackPricingStrategy {
             return Some(pricing);
         }
 
-        // Claude モデルのバリエーションを試す
-        let variations = [
-            format!("claude-3-5-{}", model_name.trim_start_matches("claude-")),
-            format!("claude-3-{}", model_name.trim_start_matches("claude-")),
-            format!("claude-{}", model_name.trim_start_matches("claude-")),
-            model_name.replace("claude-", ""),
-        ];
-
-        for variation in &variations {
-            if let Some(pricing) = self.pricing_data.get(variation) {
-                return Some(pricing);
-            }
+        if let Some(pricing) = canonical_model_name(model_name)
+            .and_then(|canonical_name| self.pricing_data.get(canonical_name))
+        {
+            return Some(pricing);
         }
 
-        // 部分マッチングフォールバック
-        for (key, pricing) in &self.pricing_data {
-            if key.contains(model_name) || model_name.contains(key) {
-                return Some(pricing);
-            }
-        }
-
-        None
+        self.pricing_data
+            .iter()
+            .filter(|(key, _)| key.contains(model_name) || model_name.contains(key.as_str()))
+            .max_by(|(left, _), (right, _)| {
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            })
+            .map(|(_, pricing)| pricing)
     }
 }
 

@@ -1,8 +1,10 @@
 use crate::helpers::{calculate_efficiency, compare_floats};
 use crate::models::{
-    DailyReport, DailyUsage, DailyUsageMap, MonthlyReport, MonthlyUsage, SessionReport,
-    SessionUsage, SessionUsageMap, TokenUsage, TokenUsageTotals, WeeklyReport, WeeklyUsage,
+    DailyReport, DailyUsage, DailyUsageMap, ModelReport, ModelUsage, MonthlyReport, MonthlyUsage,
+    SessionReport, SessionUsage, SessionUsageMap, TokenUsage, TokenUsageTotals, WeeklyReport,
+    WeeklyUsage,
 };
+use crate::models_registry::ModelsRegistry;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use std::collections::HashMap;
 
@@ -78,16 +80,74 @@ pub fn generate_session_report_sorted(
     let totals = session_entries
         .iter()
         .fold(TokenUsage::default(), |mut acc, session| {
-            acc.input_tokens += session.input_tokens;
-            acc.output_tokens += session.output_tokens;
-            acc.cache_creation_tokens += session.cache_creation_tokens;
-            acc.cache_read_tokens += session.cache_read_tokens;
+            acc.input_tokens = acc.input_tokens.saturating_add(session.input_tokens);
+            acc.output_tokens = acc.output_tokens.saturating_add(session.output_tokens);
+            acc.cache_creation_tokens = acc
+                .cache_creation_tokens
+                .saturating_add(session.cache_creation_tokens);
+            acc.cache_read_tokens = acc
+                .cache_read_tokens
+                .saturating_add(session.cache_read_tokens);
             acc.total_cost += session.total_cost;
             acc
         });
 
     SessionReport {
         sessions: session_entries,
+        totals: TokenUsageTotals::from(&totals),
+    }
+}
+
+pub fn generate_model_report_from_sources(
+    model_map: HashMap<(String, String), TokenUsage>,
+) -> ModelReport {
+    let registry = ModelsRegistry::new();
+    let mut model_entries: Vec<ModelUsage> = model_map
+        .into_iter()
+        .map(|((agent, model), usage)| {
+            let family = registry
+                .get_model_family(&model)
+                .unwrap_or_else(|| "unknown".to_string());
+            ModelUsage {
+                agent,
+                model,
+                family,
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                cache_creation_tokens: usage.cache_creation_tokens,
+                cache_read_tokens: usage.cache_read_tokens,
+                total_tokens: usage.total_tokens(),
+                total_cost: usage.total_cost,
+            }
+        })
+        .collect();
+
+    model_entries.sort_by(|a, b| {
+        b.total_cost
+            .partial_cmp(&a.total_cost)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.agent.cmp(&b.agent))
+            .then_with(|| a.family.cmp(&b.family))
+            .then_with(|| a.model.cmp(&b.model))
+    });
+
+    let totals = model_entries
+        .iter()
+        .fold(TokenUsage::default(), |mut acc, model| {
+            acc.input_tokens = acc.input_tokens.saturating_add(model.input_tokens);
+            acc.output_tokens = acc.output_tokens.saturating_add(model.output_tokens);
+            acc.cache_creation_tokens = acc
+                .cache_creation_tokens
+                .saturating_add(model.cache_creation_tokens);
+            acc.cache_read_tokens = acc
+                .cache_read_tokens
+                .saturating_add(model.cache_read_tokens);
+            acc.total_cost += model.total_cost;
+            acc
+        });
+
+    ModelReport {
+        models: model_entries,
         totals: TokenUsageTotals::from(&totals),
     }
 }

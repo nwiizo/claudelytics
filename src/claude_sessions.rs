@@ -156,7 +156,7 @@ impl ClaudeSessionParser {
     /// Get recent sessions sorted by modification time
     pub fn get_recent_sessions(&self, limit: usize) -> Result<Vec<ClaudeSession>> {
         let mut sessions = self.parse_all_sessions()?;
-        sessions.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.modified_at));
         sessions.truncate(limit);
         Ok(sessions)
     }

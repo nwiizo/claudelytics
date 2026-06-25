@@ -20,7 +20,7 @@ impl TuiApp {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(
-                    " - Claude Code Usage Analytics",
+                    " - Claude Code and Codex Usage Analytics",
                     Style::default().fg(Color::White),
                 ),
             ]),
@@ -32,7 +32,7 @@ impl TuiApp {
                     .add_modifier(Modifier::BOLD),
             )]),
             Line::from(vec![
-                Span::styled("  1-6/h, Tab/Shift+Tab", Style::default().fg(Color::Green)),
+                Span::styled("  1-7/h, Tab/Shift+Tab", Style::default().fg(Color::Green)),
                 Span::styled("  Switch between tabs", Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
@@ -102,16 +102,9 @@ impl TuiApp {
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  f", Style::default().fg(Color::Green)),
-                Span::styled(
-                    "                 Cycle time filters (All/Today/Week/Month)",
-                    Style::default().fg(Color::White),
-                ),
-            ]),
-            Line::from(vec![
                 Span::styled("  s", Style::default().fg(Color::Green)),
                 Span::styled(
-                    "                 Cycle sort modes (Date/Cost/Tokens/Project)",
+                    "                 Cycle sort modes (Date/Cost/Tokens/Efficiency/Project)",
                     Style::default().fg(Color::White),
                 ),
             ]),
@@ -232,21 +225,28 @@ impl TuiApp {
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  4. Sessions", Style::default().fg(Color::Green)),
+                Span::styled("  4. Models", Style::default().fg(Color::Green)),
+                Span::styled(
+                    "        Agent and model usage audit",
+                    Style::default().fg(Color::White),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("  5. Sessions", Style::default().fg(Color::Green)),
                 Span::styled(
                     "      Searchable session analytics",
                     Style::default().fg(Color::White),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  5. Cache", Style::default().fg(Color::Green)),
+                Span::styled("  6. Cache", Style::default().fg(Color::Green)),
                 Span::styled(
                     "         Cache analysis view",
                     Style::default().fg(Color::White),
                 ),
             ]),
             Line::from(vec![
-                Span::styled("  6. Billing", Style::default().fg(Color::Green)),
+                Span::styled("  7. Billing", Style::default().fg(Color::Green)),
                 Span::styled(
                     "       Billing blocks view",
                     Style::default().fg(Color::White),
@@ -275,7 +275,7 @@ impl TuiApp {
                 Style::default().fg(Color::White),
             )]),
             Line::from(vec![Span::styled(
-                "  \u{2022} Time-based filtering",
+                "  \u{2022} Loaded-scope agent and model audit",
                 Style::default().fg(Color::White),
             )]),
             Line::from(vec![Span::styled(

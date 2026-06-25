@@ -81,14 +81,10 @@ impl TuiApp {
 
         // Summary section
         let tw = analysis.total_cache_writes.max(1) as f64;
-        let total_io = analysis
-            .total_cache_writes
-            .saturating_add(analysis.total_cache_reads);
-        let hit_rate = if total_io > 0 {
-            analysis.total_cache_reads as f64 / total_io as f64 * 100.0
-        } else {
-            0.0
-        };
+        let hit_rate =
+            Self::cache_hit_rate_pct(analysis.total_cache_reads, analysis.total_cache_writes);
+        let reuse_ratio =
+            Self::cache_reuse_ratio(analysis.total_cache_reads, analysis.total_cache_writes);
 
         let cold_pct = analysis.total_cold_start as f64 / tw * 100.0;
         let miss_5m_pct = analysis.total_5m_miss as f64 / tw * 100.0;
@@ -104,6 +100,20 @@ impl TuiApp {
                         .fg(if hit_rate > 70.0 {
                             Color::Green
                         } else if hit_rate > 40.0 {
+                            Color::Yellow
+                        } else {
+                            Color::Red
+                        })
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw("  |  "),
+                Span::styled("Reuse: ", Style::default().fg(Color::White)),
+                Span::styled(
+                    Self::format_ratio(reuse_ratio),
+                    Style::default()
+                        .fg(if reuse_ratio >= 2.0 {
+                            Color::Green
+                        } else if reuse_ratio >= 1.0 {
                             Color::Yellow
                         } else {
                             Color::Red
@@ -175,7 +185,8 @@ impl TuiApp {
             "Session",
             "Project",
             "Turns",
-            "Hit Rate",
+            "Hit%",
+            "Reuse",
             "Cold Start",
             "5m Miss",
             "60m Miss",
@@ -227,6 +238,8 @@ impl TuiApp {
                     Some(t) => format!("{}", t),
                     None => "-".to_string(),
                 };
+                let reuse_ratio =
+                    Self::cache_reuse_ratio(s.total_cache_read_tokens, s.total_cache_write_tokens);
 
                 Row::new(vec![
                     Cell::from(session_short).style(style),
@@ -234,6 +247,15 @@ impl TuiApp {
                     Cell::from(format!("{}", s.turn_count)).style(style),
                     Cell::from(format!("{:.1}%", s.hit_rate_pct))
                         .style(Style::default().fg(hit_color)),
+                    Cell::from(Self::format_ratio(reuse_ratio)).style(Style::default().fg(
+                        if reuse_ratio >= 2.0 {
+                            Color::Green
+                        } else if reuse_ratio >= 1.0 {
+                            Color::Yellow
+                        } else {
+                            Color::Red
+                        },
+                    )),
                     Cell::from(Self::format_tokens_static(s.cold_start_tokens))
                         .style(Style::default().fg(Color::Red)),
                     Cell::from(Self::format_tokens_static(s.ttl_5m_miss_tokens))
@@ -254,6 +276,7 @@ impl TuiApp {
                 Constraint::Length(22),
                 Constraint::Length(6),
                 Constraint::Length(9),
+                Constraint::Length(8),
                 Constraint::Length(11),
                 Constraint::Length(10),
                 Constraint::Length(10),
@@ -267,7 +290,7 @@ impl TuiApp {
                 .borders(Borders::ALL)
                 .title(format!("Sessions ({} total)", analysis.sessions.len())),
         )
-        .highlight_style(
+        .row_highlight_style(
             Style::default()
                 .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD),

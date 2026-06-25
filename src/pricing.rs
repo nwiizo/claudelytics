@@ -1,3 +1,4 @@
+use chrono::{NaiveDate, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -6,6 +7,40 @@ pub const FAST_MODE_MULTIPLIER: f64 = 6.0;
 
 /// Token threshold for tiered pricing on 1M context models
 pub const TIERED_THRESHOLD: u64 = 200_000;
+
+/// OpenAI switches the whole request to long-context rates above this input size.
+pub const OPENAI_LONG_CONTEXT_THRESHOLD: u64 = 272_000;
+const SONNET_5_INTRO_PRICING_KEY: &str = "__claude-sonnet-5-intro";
+const SONNET_5_INTRO_END: NaiveDate =
+    NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid Sonnet 5 pricing date");
+
+pub(crate) fn canonical_model_name(model_name: &str) -> Option<&'static str> {
+    if model_name == "gpt-5.6" {
+        Some("gpt-5.6-sol")
+    } else if model_name.contains("fable-5") {
+        Some("claude-fable-5")
+    } else if model_name.contains("sonnet-5") {
+        Some("claude-sonnet-5")
+    } else if model_name.contains("sonnet-4-6") || model_name.contains("sonnet-4.6") {
+        Some("claude-sonnet-4-6")
+    } else if model_name.contains("sonnet-4") {
+        Some("claude-sonnet-4-20250514")
+    } else if model_name.contains("opus-5") {
+        Some("claude-opus-5")
+    } else if model_name.contains("opus-4-8") || model_name.contains("opus-4.8") {
+        Some("claude-opus-4-8")
+    } else if model_name.contains("opus-4-7") || model_name.contains("opus-4.7") {
+        Some("claude-opus-4-7")
+    } else if model_name.contains("opus-4-6") || model_name.contains("opus-4.6") {
+        Some("claude-opus-4-6")
+    } else if model_name.contains("opus-4") {
+        Some("claude-opus-4-20250514")
+    } else if model_name.contains("haiku-4-5") || model_name.contains("haiku-4.5") {
+        Some("claude-haiku-4-5-20251001")
+    } else {
+        None
+    }
+}
 
 #[derive(Debug, Deserialize, Clone, serde::Serialize)]
 pub struct ModelPricing {
@@ -22,6 +57,9 @@ pub struct ModelPricing {
     pub cache_creation_cost_above_200k: Option<f64>,
     #[serde(default)]
     pub cache_read_cost_above_200k: Option<f64>,
+    /// Provider-specific threshold for whole-request two-stage pricing.
+    #[serde(default)]
+    pub long_context_threshold: Option<u64>,
 }
 
 pub struct PricingFetcher;
@@ -37,62 +75,49 @@ impl PricingFetcher {
         Self
     }
 
-    pub fn get_model_pricing(
+    pub fn get_model_pricing<'a>(
         &self,
-        pricing_data: &HashMap<String, ModelPricing>,
+        pricing_data: &'a HashMap<String, ModelPricing>,
         model_name: &str,
-    ) -> Option<ModelPricing> {
+    ) -> Option<&'a ModelPricing> {
+        self.get_model_pricing_at(pricing_data, model_name, Utc::now().date_naive())
+    }
+
+    pub fn get_model_pricing_at<'a>(
+        &self,
+        pricing_data: &'a HashMap<String, ModelPricing>,
+        model_name: &str,
+        usage_date: NaiveDate,
+    ) -> Option<&'a ModelPricing> {
+        if canonical_model_name(model_name) == Some("claude-sonnet-5")
+            && usage_date <= SONNET_5_INTRO_END
+            && let Some(pricing) = pricing_data.get(SONNET_5_INTRO_PRICING_KEY)
+        {
+            return Some(pricing);
+        }
+
         // Direct match first
         if let Some(pricing) = pricing_data.get(model_name) {
-            return Some(pricing.clone());
+            return Some(pricing);
         }
 
-        // Try variations for Claude models
-        let claude_variations = [
-            // Exact model name variations
-            model_name.to_string(),
-            format!("claude-3-5-{}", model_name.trim_start_matches("claude-")),
-            format!("claude-3-{}", model_name.trim_start_matches("claude-")),
-            format!("claude-{}", model_name.trim_start_matches("claude-")),
-            model_name.replace("claude-", ""),
-            // Handle specific model mappings
-            if model_name.contains("sonnet-4-6") || model_name.contains("sonnet-4.6") {
-                "claude-sonnet-4-6-20260310".to_string()
-            } else if model_name.contains("sonnet-4") {
-                "claude-sonnet-4-20250514".to_string()
-            } else {
-                String::new()
-            },
-            if model_name.contains("opus-4-6") || model_name.contains("opus-4.6") {
-                "claude-opus-4-6-20260310".to_string()
-            } else if model_name.contains("opus-4") {
-                "claude-opus-4-20250514".to_string()
-            } else {
-                String::new()
-            },
-            if model_name.contains("haiku-4-5") || model_name.contains("haiku-4.5") {
-                "claude-haiku-4-5-20251001".to_string()
-            } else {
-                String::new()
-            },
-        ];
-
-        for variation in &claude_variations {
-            if !variation.is_empty()
-                && let Some(pricing) = pricing_data.get(variation)
-            {
-                return Some(pricing.clone());
-            }
+        // Resolve current provider aliases without allocating temporary strings
+        // on every usage record.
+        if let Some(pricing) = canonical_model_name(model_name)
+            .and_then(|canonical_name| pricing_data.get(canonical_name))
+        {
+            return Some(pricing);
         }
 
-        // Partial match as fallback
-        for (key, pricing) in pricing_data {
-            if key.contains(model_name) || model_name.contains(key) {
-                return Some(pricing.clone());
-            }
-        }
-
-        None
+        // Prefer the most-specific fallback to make overlapping model names
+        // deterministic regardless of HashMap iteration order.
+        pricing_data
+            .iter()
+            .filter(|(key, _)| key.contains(model_name) || model_name.contains(key.as_str()))
+            .max_by(|(left, _), (right, _)| {
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            })
+            .map(|(_, pricing)| pricing)
     }
 
     pub fn calculate_cost(
@@ -103,7 +128,20 @@ impl PricingFetcher {
         cache_creation_tokens: u64,
         cache_read_tokens: u64,
     ) -> f64 {
-        let total_input_context = input_tokens + cache_read_tokens + cache_creation_tokens;
+        let total_input_context = input_tokens
+            .saturating_add(cache_read_tokens)
+            .saturating_add(cache_creation_tokens);
+        if let Some(threshold) = pricing.long_context_threshold {
+            return self.calculate_whole_request_cost(
+                pricing,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+                total_input_context > threshold,
+            );
+        }
+
         let use_tiered = total_input_context > TIERED_THRESHOLD
             && pricing.input_cost_per_token_above_200k.is_some();
 
@@ -125,6 +163,49 @@ impl PricingFetcher {
                 cache_read_tokens,
             )
         }
+    }
+
+    fn calculate_whole_request_cost(
+        &self,
+        pricing: &ModelPricing,
+        input_tokens: u64,
+        output_tokens: u64,
+        cache_creation_tokens: u64,
+        cache_read_tokens: u64,
+        use_long_context_rates: bool,
+    ) -> f64 {
+        let rate = |base: Option<f64>, long: Option<f64>| {
+            if use_long_context_rates {
+                long.or(base)
+            } else {
+                base
+            }
+        };
+
+        input_tokens as f64
+            * rate(
+                pricing.input_cost_per_token,
+                pricing.input_cost_per_token_above_200k,
+            )
+            .unwrap_or_default()
+            + output_tokens as f64
+                * rate(
+                    pricing.output_cost_per_token,
+                    pricing.output_cost_per_token_above_200k,
+                )
+                .unwrap_or_default()
+            + cache_creation_tokens as f64
+                * rate(
+                    pricing.cache_creation_input_token_cost,
+                    pricing.cache_creation_cost_above_200k,
+                )
+                .unwrap_or_default()
+            + cache_read_tokens as f64
+                * rate(
+                    pricing.cache_read_input_token_cost,
+                    pricing.cache_read_cost_above_200k,
+                )
+                .unwrap_or_default()
     }
 
     fn calculate_flat_cost(
@@ -220,10 +301,20 @@ impl PricingFetcher {
     }
 }
 
-// Fallback pricing for common Claude models (as of 2025)
-// Updated to match ccusage pricing methodology
+// Offline fallback pricing aligned with current provider pricing and ccusage.
 pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
     let mut pricing = HashMap::new();
+    let claude_pricing = |input_per_million: f64, output_per_million: f64| ModelPricing {
+        input_cost_per_token: Some(input_per_million / 1_000_000.0),
+        output_cost_per_token: Some(output_per_million / 1_000_000.0),
+        cache_creation_input_token_cost: Some(input_per_million * 1.25 / 1_000_000.0),
+        cache_read_input_token_cost: Some(input_per_million * 0.1 / 1_000_000.0),
+        input_cost_per_token_above_200k: None,
+        output_cost_per_token_above_200k: None,
+        cache_creation_cost_above_200k: None,
+        cache_read_cost_above_200k: None,
+        long_context_threshold: None,
+    };
 
     // Claude Sonnet 4 - $3/$15 per MTok, above 200k: $6/$30
     pricing.insert(
@@ -237,6 +328,7 @@ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
             output_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
             cache_creation_cost_above_200k: Some(7.5 / 1_000_000.0),
             cache_read_cost_above_200k: Some(0.6 / 1_000_000.0),
+            long_context_threshold: None,
         },
     );
 
@@ -252,98 +344,109 @@ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
             output_cost_per_token_above_200k: Some(150.0 / 1_000_000.0),
             cache_creation_cost_above_200k: Some(37.5 / 1_000_000.0),
             cache_read_cost_above_200k: Some(3.0 / 1_000_000.0),
+            long_context_threshold: None,
         },
     );
 
-    // Claude 3.5 Sonnet - $3/$15 per MTok (no tiered pricing, 200k context)
     pricing.insert(
         "claude-3-5-sonnet-20241022".to_string(),
-        ModelPricing {
-            input_cost_per_token: Some(3.0 / 1_000_000.0),
-            output_cost_per_token: Some(15.0 / 1_000_000.0),
-            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
-            cache_read_input_token_cost: Some(0.3 / 1_000_000.0),
-            input_cost_per_token_above_200k: None,
-            output_cost_per_token_above_200k: None,
-            cache_creation_cost_above_200k: None,
-            cache_read_cost_above_200k: None,
-        },
+        claude_pricing(3.0, 15.0),
     );
-
-    // Claude 3.5 Haiku - $0.80/$4 per MTok (no tiered pricing)
     pricing.insert(
         "claude-3-5-haiku-20241022".to_string(),
-        ModelPricing {
-            input_cost_per_token: Some(0.8 / 1_000_000.0),
-            output_cost_per_token: Some(4.0 / 1_000_000.0),
-            cache_creation_input_token_cost: Some(1.0 / 1_000_000.0),
-            cache_read_input_token_cost: Some(0.08 / 1_000_000.0),
-            input_cost_per_token_above_200k: None,
-            output_cost_per_token_above_200k: None,
-            cache_creation_cost_above_200k: None,
-            cache_read_cost_above_200k: None,
-        },
+        claude_pricing(0.8, 4.0),
     );
-
-    // Claude 3 Opus - $15/$75 per MTok (no tiered pricing, 200k context)
     pricing.insert(
         "claude-3-opus-20240229".to_string(),
-        ModelPricing {
-            input_cost_per_token: Some(15.0 / 1_000_000.0),
-            output_cost_per_token: Some(75.0 / 1_000_000.0),
-            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0),
-            cache_read_input_token_cost: Some(1.5 / 1_000_000.0),
-            input_cost_per_token_above_200k: None,
-            output_cost_per_token_above_200k: None,
-            cache_creation_cost_above_200k: None,
-            cache_read_cost_above_200k: None,
-        },
+        claude_pricing(15.0, 75.0),
     );
 
-    // Claude Opus 4.6 - $15/$75 per MTok, above 200k: $30/$150
+    // Current Claude generation.
+    for (model, input, output) in [
+        ("claude-fable-5", 10.0, 50.0),
+        ("claude-opus-5", 5.0, 25.0),
+        ("claude-opus-4-8", 5.0, 25.0),
+        ("claude-opus-4-7", 5.0, 25.0),
+        ("claude-opus-4-6", 5.0, 25.0),
+        ("claude-sonnet-5", 3.0, 15.0),
+        ("claude-sonnet-4-6", 3.0, 15.0),
+        ("claude-haiku-4-5-20251001", 1.0, 5.0),
+    ] {
+        pricing.insert(model.to_string(), claude_pricing(input, output));
+    }
     pricing.insert(
-        "claude-opus-4-6-20260310".to_string(),
-        ModelPricing {
-            input_cost_per_token: Some(15.0 / 1_000_000.0),
-            output_cost_per_token: Some(75.0 / 1_000_000.0),
-            cache_creation_input_token_cost: Some(18.75 / 1_000_000.0),
-            cache_read_input_token_cost: Some(1.5 / 1_000_000.0),
-            input_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
-            output_cost_per_token_above_200k: Some(150.0 / 1_000_000.0),
-            cache_creation_cost_above_200k: Some(37.5 / 1_000_000.0),
-            cache_read_cost_above_200k: Some(3.0 / 1_000_000.0),
-        },
+        SONNET_5_INTRO_PRICING_KEY.to_string(),
+        claude_pricing(2.0, 10.0),
     );
 
-    // Claude Sonnet 4.6 - $3/$15 per MTok, above 200k: $6/$30
-    pricing.insert(
-        "claude-sonnet-4-6-20260310".to_string(),
-        ModelPricing {
-            input_cost_per_token: Some(3.0 / 1_000_000.0),
-            output_cost_per_token: Some(15.0 / 1_000_000.0),
-            cache_creation_input_token_cost: Some(3.75 / 1_000_000.0),
-            cache_read_input_token_cost: Some(0.3 / 1_000_000.0),
-            input_cost_per_token_above_200k: Some(6.0 / 1_000_000.0),
-            output_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
-            cache_creation_cost_above_200k: Some(7.5 / 1_000_000.0),
-            cache_read_cost_above_200k: Some(0.6 / 1_000_000.0),
-        },
-    );
+    let openai_pricing = |input_per_million: f64, output_per_million: f64| ModelPricing {
+        input_cost_per_token: Some(input_per_million / 1_000_000.0),
+        output_cost_per_token: Some(output_per_million / 1_000_000.0),
+        // Older model pages do not publish a distinct cache-write price.
+        // If a newer wire record reports writes for one of these models,
+        // bill them at the ordinary input rate rather than making them free.
+        cache_creation_input_token_cost: Some(input_per_million / 1_000_000.0),
+        cache_read_input_token_cost: Some(input_per_million * 0.1 / 1_000_000.0),
+        input_cost_per_token_above_200k: None,
+        output_cost_per_token_above_200k: None,
+        cache_creation_cost_above_200k: None,
+        cache_read_cost_above_200k: None,
+        long_context_threshold: None,
+    };
 
-    // Claude Haiku 4.5 - $0.80/$4 per MTok (no tiered pricing)
-    pricing.insert(
-        "claude-haiku-4-5-20251001".to_string(),
-        ModelPricing {
-            input_cost_per_token: Some(0.8 / 1_000_000.0),
-            output_cost_per_token: Some(4.0 / 1_000_000.0),
-            cache_creation_input_token_cost: Some(1.0 / 1_000_000.0),
-            cache_read_input_token_cost: Some(0.08 / 1_000_000.0),
-            input_cost_per_token_above_200k: None,
-            output_cost_per_token_above_200k: None,
-            cache_creation_cost_above_200k: None,
-            cache_read_cost_above_200k: None,
-        },
-    );
+    for (model, input, output) in [
+        ("gpt-5-codex", 1.25, 10.0),
+        ("gpt-5.1-codex", 1.25, 10.0),
+        ("gpt-5.1-codex-mini", 0.25, 2.0),
+        ("gpt-5.2-codex", 1.75, 14.0),
+        ("gpt-5.3-codex", 1.75, 14.0),
+        ("gpt-5", 1.25, 10.0),
+    ] {
+        pricing.insert(model.to_string(), openai_pricing(input, output));
+    }
+
+    // OpenAI bills GPT-5.6 requests above 272K input tokens entirely at the
+    // long-context tier rather than applying a marginal breakpoint.
+    for (
+        model,
+        input,
+        output,
+        cache_create,
+        cache_read,
+        long_input,
+        long_output,
+        long_cache_create,
+        long_cache_read,
+    ) in [
+        ("gpt-5.6-sol", 5.0, 30.0, 6.25, 0.5, 10.0, 45.0, 12.5, 1.0),
+        (
+            "gpt-5.6-terra",
+            2.5,
+            15.0,
+            3.125,
+            0.25,
+            5.0,
+            22.5,
+            6.25,
+            0.5,
+        ),
+        ("gpt-5.6-luna", 1.0, 6.0, 1.25, 0.1, 2.0, 9.0, 2.5, 0.2),
+    ] {
+        pricing.insert(
+            model.to_string(),
+            ModelPricing {
+                input_cost_per_token: Some(input / 1_000_000.0),
+                output_cost_per_token: Some(output / 1_000_000.0),
+                cache_creation_input_token_cost: Some(cache_create / 1_000_000.0),
+                cache_read_input_token_cost: Some(cache_read / 1_000_000.0),
+                input_cost_per_token_above_200k: Some(long_input / 1_000_000.0),
+                output_cost_per_token_above_200k: Some(long_output / 1_000_000.0),
+                cache_creation_cost_above_200k: Some(long_cache_create / 1_000_000.0),
+                cache_read_cost_above_200k: Some(long_cache_read / 1_000_000.0),
+                long_context_threshold: Some(OPENAI_LONG_CONTEXT_THRESHOLD),
+            },
+        );
+    }
 
     pricing
 }
@@ -362,6 +465,7 @@ mod tests {
             output_cost_per_token_above_200k: Some(30.0 / 1_000_000.0),
             cache_creation_cost_above_200k: Some(7.50 / 1_000_000.0),
             cache_read_cost_above_200k: Some(0.60 / 1_000_000.0),
+            long_context_threshold: None,
         }
     }
 
@@ -462,6 +566,109 @@ mod tests {
         let data = get_fallback_pricing();
         let result = fetcher.get_model_pricing(&data, "nonexistent-model-xyz");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_fable_5_pricing_matches_current_rates() {
+        let pricing = get_fallback_pricing()
+            .remove("claude-fable-5")
+            .expect("Fable 5 pricing should be registered");
+
+        assert_eq!(pricing.input_cost_per_token, Some(10.0 / 1_000_000.0));
+        assert_eq!(pricing.output_cost_per_token, Some(50.0 / 1_000_000.0));
+        assert_eq!(
+            pricing.cache_creation_input_token_cost,
+            Some(12.5 / 1_000_000.0)
+        );
+        assert_eq!(pricing.cache_read_input_token_cost, Some(1.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn test_sonnet_5_pricing_is_effective_dated() {
+        let fetcher = PricingFetcher::new();
+        let data = get_fallback_pricing();
+        let introductory = fetcher
+            .get_model_pricing_at(
+                &data,
+                "claude-sonnet-5",
+                NaiveDate::from_ymd_opt(2026, 8, 31).unwrap(),
+            )
+            .unwrap();
+        let standard = fetcher
+            .get_model_pricing_at(
+                &data,
+                "claude-sonnet-5",
+                NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(introductory.input_cost_per_token, Some(2.0 / 1_000_000.0));
+        assert_eq!(introductory.output_cost_per_token, Some(10.0 / 1_000_000.0));
+        assert_eq!(standard.input_cost_per_token, Some(3.0 / 1_000_000.0));
+        assert_eq!(standard.output_cost_per_token, Some(15.0 / 1_000_000.0));
+    }
+
+    #[test]
+    fn test_gpt_5_6_alias_resolves_to_sol() {
+        let fetcher = PricingFetcher::new();
+        let data = get_fallback_pricing();
+        let alias = fetcher
+            .get_model_pricing(&data, "gpt-5.6")
+            .expect("GPT-5.6 alias should resolve");
+        let sol = data
+            .get("gpt-5.6-sol")
+            .expect("GPT-5.6 Sol should be registered");
+
+        assert_eq!(alias.input_cost_per_token, sol.input_cost_per_token);
+        assert_eq!(alias.output_cost_per_token, sol.output_cost_per_token);
+    }
+
+    #[test]
+    fn test_gpt_5_6_uses_whole_request_long_context_rates() {
+        let fetcher = PricingFetcher::new();
+        let pricing = get_fallback_pricing()
+            .remove("gpt-5.6-sol")
+            .expect("GPT-5.6 Sol pricing should be registered");
+
+        let short = fetcher.calculate_cost(&pricing, 100_000, 1_000, 0, 100);
+        let long = fetcher.calculate_cost(&pricing, 300_000, 1_000, 0, 100);
+
+        assert!((short - 0.53005).abs() < 1e-9, "short cost was {short}");
+        assert!((long - 3.0451).abs() < 1e-9, "long cost was {long}");
+    }
+
+    #[test]
+    fn test_codex_fallback_rates_are_model_specific() {
+        let pricing = get_fallback_pricing();
+        for (model, input, cached, output) in [
+            ("gpt-5-codex", 1.25, 0.125, 10.0),
+            ("gpt-5.1-codex", 1.25, 0.125, 10.0),
+            ("gpt-5.1-codex-mini", 0.25, 0.025, 2.0),
+            ("gpt-5.2-codex", 1.75, 0.175, 14.0),
+            ("gpt-5.3-codex", 1.75, 0.175, 14.0),
+        ] {
+            let model_pricing = pricing.get(model).unwrap();
+            let input_rate = model_pricing.input_cost_per_token.unwrap();
+            let cache_write_rate = model_pricing.cache_creation_input_token_cost.unwrap();
+            let cached_rate = model_pricing.cache_read_input_token_cost.unwrap();
+            let output_rate = model_pricing.output_cost_per_token.unwrap();
+            assert!(
+                (input_rate - input / 1_000_000.0).abs() < f64::EPSILON,
+                "{model} input"
+            );
+            assert!(
+                (cached_rate - cached / 1_000_000.0).abs() < f64::EPSILON,
+                "{model} cached input"
+            );
+            assert!(
+                (cache_write_rate - input / 1_000_000.0).abs() < f64::EPSILON,
+                "{model} cache write"
+            );
+            assert!(
+                (output_rate - output / 1_000_000.0).abs() < f64::EPSILON,
+                "{model} output"
+            );
+        }
     }
 
     #[test]

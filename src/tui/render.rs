@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Tabs, Wrap},
 };
 
-use super::{AppMode, ExportFormat, SortMode, Tab, TimeFilter, TuiApp};
+use super::{AppMode, ExportFormat, SortMode, Tab, TuiApp};
 
 impl TuiApp {
     pub(crate) fn ui(&mut self, f: &mut Frame) {
@@ -62,13 +62,7 @@ impl TuiApp {
         }
         .to_string();
 
-        self.visual_effects.status_bar.filter = match self.time_filter {
-            TimeFilter::All => "All",
-            TimeFilter::Today => "Today",
-            TimeFilter::LastWeek => "Week",
-            TimeFilter::LastMonth => "Month",
-        }
-        .to_string();
+        self.visual_effects.status_bar.filter = "Loaded".to_string();
 
         self.visual_effects.status_bar.sort = match self.sort_mode {
             SortMode::Date => "Date",
@@ -86,6 +80,7 @@ impl TuiApp {
                 .as_ref()
                 .map(|r| r.weekly.len())
                 .unwrap_or(0),
+            Tab::Models => self.model_report.models.len(),
             Tab::Sessions => self.session_report.sessions.len(),
             Tab::Cache => self
                 .cache_analysis
@@ -98,6 +93,7 @@ impl TuiApp {
         self.visual_effects.status_bar.selected_index = match self.current_tab {
             Tab::Daily => self.daily_table_state.selected(),
             Tab::Weekly => self.weekly_table_state.selected(),
+            Tab::Models => self.model_table_state.selected(),
             Tab::Sessions => self.session_table_state.selected(),
             Tab::Cache => self.cache_table_state.selected(),
             _ => None,
@@ -114,7 +110,6 @@ impl TuiApp {
                 ("b".to_string(), "Bookmark".to_string()),
                 ("x".to_string(), "Compare".to_string()),
                 ("s".to_string(), "Sort".to_string()),
-                ("f".to_string(), "Filter".to_string()),
             ],
             _ => vec![],
         };
@@ -148,6 +143,7 @@ impl TuiApp {
             "\u{1f4ca} Overview",
             "\u{1f4c5} Daily",
             "\u{1f4c6} Weekly",
+            "\u{1f916} Models",
             "\u{1f4cb} Sessions",
             "\u{1f504} Cache",
             "\u{23f0} Billing",
@@ -173,6 +169,7 @@ impl TuiApp {
             Tab::Overview => self.render_overview(f, main_area),
             Tab::Daily => self.render_daily(f, main_area),
             Tab::Weekly => self.render_weekly(f, main_area),
+            Tab::Models => self.render_models(f, main_area),
             Tab::Sessions => self.render_sessions(f, main_area),
             Tab::Cache => self.render_cache(f, main_area),
             Tab::BillingBlocks => self.render_billing_blocks(f, main_area),
@@ -216,7 +213,6 @@ impl TuiApp {
             Line::from(""),
             Line::from("/ - Search"),
             Line::from("s - Sort"),
-            Line::from("f - Filter"),
             Line::from("r - Refresh"),
             Line::from("e - Export"),
             Line::from("? - Toggle this popup"),
@@ -312,7 +308,7 @@ impl TuiApp {
                 ))
                 .border_style(Style::default().fg(Color::Blue)),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("\u{25ba} ")
         .style(Style::default().bg(Color::Black));
 
@@ -352,6 +348,7 @@ impl TuiApp {
         let data_type = match self.current_tab {
             Tab::Daily => "Daily Report",
             Tab::Weekly => "Weekly Report",
+            Tab::Models => "Models Report",
             Tab::Sessions => "Sessions Report",
             Tab::BillingBlocks => "Billing Blocks",
             Tab::Cache => "Cache Analysis",

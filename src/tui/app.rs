@@ -13,10 +13,11 @@ use ratatui::{
     layout::Rect,
 };
 use std::io;
+use std::sync::mpsc::{Receiver, TryRecvError};
 
 use super::{AppMode, ExportDialogState, ExportFormat, Tab, TuiApp};
 use crate::billing_blocks::BillingBlockManager;
-use crate::models::{Command, CommandAction, DailyReport, SessionReport};
+use crate::models::{Command, CommandAction, DailyReport, ModelReport, SessionReport};
 use crate::pricing_cache::PricingCache;
 use crate::tui::PricingCacheStatus;
 use crate::tui_visuals::VisualEffectsManager;
@@ -27,6 +28,7 @@ impl TuiApp {
     pub fn new(
         daily_report: DailyReport,
         session_report: SessionReport,
+        model_report: ModelReport,
         billing_manager: BillingBlockManager,
     ) -> Self {
         let mut daily_table_state = TableState::default();
@@ -34,6 +36,9 @@ impl TuiApp {
 
         let mut session_table_state = TableState::default();
         session_table_state.select(Some(0));
+
+        let mut model_table_state = TableState::default();
+        model_table_state.select(Some(0));
 
         let session_scroll_state = ScrollbarState::new(session_report.sessions.len());
         let available_commands = Self::create_available_commands();
@@ -58,12 +63,17 @@ impl TuiApp {
         let mut app = Self {
             daily_report: daily_report.clone(),
             session_report: session_report.clone(),
+            model_report,
+            model_report_loading: false,
+            model_report_error: None,
+            model_report_receiver: None,
             original_daily_report: daily_report,
             original_session_report: session_report,
             current_tab: Tab::Overview,
             current_mode: AppMode::Normal,
             daily_table_state,
             session_table_state,
+            model_table_state,
             command_table_state: TableState::default(),
             session_scroll_state,
             command_scroll_state: ScrollbarState::new(0),
@@ -71,7 +81,6 @@ impl TuiApp {
             search_mode: false,
             search_query: String::new(),
             sort_mode: super::SortMode::Date,
-            time_filter: super::TimeFilter::All,
             status_message: None,
             show_help_popup: false,
             command_palette_query: String::new(),
@@ -105,6 +114,51 @@ impl TuiApp {
         // Apply initial filters and sorting
         app.apply_filters();
         app
+    }
+
+    pub fn set_model_report_receiver(
+        &mut self,
+        receiver: Receiver<std::result::Result<ModelReport, String>>,
+    ) {
+        self.model_report_loading = true;
+        self.model_report_error = None;
+        self.model_report_receiver = Some(receiver);
+        self.status_message = Some("Loading model usage in background...".to_string());
+    }
+
+    pub(crate) fn poll_model_report(&mut self) {
+        let Some(result) = self.model_report_receiver.as_ref().map(|rx| rx.try_recv()) else {
+            return;
+        };
+
+        match result {
+            Ok(Ok(report)) => {
+                self.model_report = report;
+                self.model_table_state
+                    .select(if self.model_report.models.is_empty() {
+                        None
+                    } else {
+                        Some(0)
+                    });
+                self.model_report_loading = false;
+                self.model_report_error = None;
+                self.model_report_receiver = None;
+                self.status_message = Some("Model usage loaded".to_string());
+            }
+            Ok(Err(error)) => {
+                self.model_report_loading = false;
+                self.model_report_error = Some(error.clone());
+                self.model_report_receiver = None;
+                self.status_message = Some(format!("Model usage failed: {error}"));
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                self.model_report_loading = false;
+                self.model_report_error =
+                    Some("Model usage loader disconnected unexpectedly".to_string());
+                self.model_report_receiver = None;
+            }
+        }
     }
 
     // State extraction methods for resume functionality
@@ -147,10 +201,11 @@ impl TuiApp {
             0 => Tab::Overview,
             1 => Tab::Daily,
             2 => Tab::Weekly,
-            3 => Tab::Sessions,
-            4 => Tab::Cache,
-            5 => Tab::BillingBlocks,
-            6 => Tab::Help,
+            3 => Tab::Models,
+            4 => Tab::Sessions,
+            5 => Tab::Cache,
+            6 => Tab::BillingBlocks,
+            7 => Tab::Help,
             _ => Tab::Overview,
         };
     }
@@ -204,31 +259,45 @@ impl TuiApp {
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Sessions".to_string(),
-                description: "Go to sessions tab".to_string(),
+                name: "Switch to Weekly".to_string(),
+                description: "Go to weekly usage tab".to_string(),
                 shortcut: Some("3".to_string()),
                 action: CommandAction::SwitchTab(2),
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Cache".to_string(),
-                description: "Go to cache analysis tab".to_string(),
+                name: "Switch to Models".to_string(),
+                description: "Go to model and agent breakdown tab".to_string(),
+                shortcut: Some("4".to_string()),
+                action: CommandAction::SwitchTab(3),
+                category: "Navigation".to_string(),
+            },
+            Command {
+                name: "Switch to Sessions".to_string(),
+                description: "Go to sessions tab".to_string(),
                 shortcut: Some("5".to_string()),
                 action: CommandAction::SwitchTab(4),
                 category: "Navigation".to_string(),
             },
             Command {
-                name: "Switch to Billing".to_string(),
-                description: "Go to billing blocks tab".to_string(),
+                name: "Switch to Cache".to_string(),
+                description: "Go to cache analysis tab".to_string(),
                 shortcut: Some("6".to_string()),
                 action: CommandAction::SwitchTab(5),
+                category: "Navigation".to_string(),
+            },
+            Command {
+                name: "Switch to Billing".to_string(),
+                description: "Go to billing blocks tab".to_string(),
+                shortcut: Some("7".to_string()),
+                action: CommandAction::SwitchTab(6),
                 category: "Navigation".to_string(),
             },
             Command {
                 name: "Switch to Help".to_string(),
                 description: "Go to help tab".to_string(),
                 shortcut: Some("h".to_string()),
-                action: CommandAction::SwitchTab(6),
+                action: CommandAction::SwitchTab(7),
                 category: "Navigation".to_string(),
             },
             Command {
@@ -271,8 +340,13 @@ impl TuiApp {
         result
     }
 
-    fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+    fn run_app<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()>
+    where
+        B::Error: std::error::Error + Send + Sync + 'static,
+    {
         loop {
+            self.poll_model_report();
+
             // Update visual effects
             self.visual_effects.tick();
 
@@ -287,14 +361,15 @@ impl TuiApp {
                         if key.kind == KeyEventKind::Press {
                             // Add key press visual effect
                             if let KeyCode::Char(c) = key.code {
+                                let terminal_size = terminal.size()?;
                                 let key_str = if key.modifiers.contains(KeyModifiers::CONTROL) {
                                     format!("Ctrl+{}", c)
                                 } else {
                                     c.to_string()
                                 };
                                 let effect_pos = Rect {
-                                    x: (terminal.size()?.width / 2).saturating_sub(2),
-                                    y: terminal.size()?.height.saturating_sub(5),
+                                    x: (terminal_size.width / 2).saturating_sub(2),
+                                    y: terminal_size.height.saturating_sub(5),
                                     width: 5,
                                     height: 1,
                                 };
@@ -336,5 +411,265 @@ impl TuiApp {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{DailyUsage, ModelUsage, SessionUsage, TokenUsageTotals};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::time::{Duration, Instant};
+
+    fn empty_daily_report() -> DailyReport {
+        DailyReport {
+            daily: Vec::new(),
+            totals: TokenUsageTotals {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 0,
+                total_cost: 0.0,
+            },
+        }
+    }
+
+    fn empty_session_report() -> SessionReport {
+        SessionReport {
+            sessions: Vec::new(),
+            totals: TokenUsageTotals {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 0,
+                total_cost: 0.0,
+            },
+        }
+    }
+
+    fn empty_model_report() -> ModelReport {
+        ModelReport {
+            models: Vec::new(),
+            totals: TokenUsageTotals {
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_creation_tokens: 0,
+                cache_read_tokens: 0,
+                total_tokens: 0,
+                total_cost: 0.0,
+            },
+        }
+    }
+
+    fn audit_app() -> TuiApp {
+        let daily_report = DailyReport {
+            daily: vec![
+                DailyUsage {
+                    date: "2026-07-26".to_string(),
+                    input_tokens: 1_000,
+                    output_tokens: 200,
+                    cache_creation_tokens: 100,
+                    cache_read_tokens: 400,
+                    total_tokens: 1_700,
+                    total_cost: 1.25,
+                },
+                DailyUsage {
+                    date: "2026-07-10".to_string(),
+                    input_tokens: 500,
+                    output_tokens: 100,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 100,
+                    total_tokens: 700,
+                    total_cost: 0.75,
+                },
+            ],
+            totals: empty_daily_report().totals,
+        };
+        let session_report = SessionReport {
+            sessions: vec![
+                SessionUsage {
+                    project_path: "-github-com-example-project".to_string(),
+                    session_id: "claude-session".to_string(),
+                    input_tokens: 700,
+                    output_tokens: 100,
+                    cache_creation_tokens: 100,
+                    cache_read_tokens: 200,
+                    total_tokens: 1_100,
+                    total_cost: 0.85,
+                    last_activity: "2026-07-26".to_string(),
+                },
+                SessionUsage {
+                    project_path: "Codex".to_string(),
+                    session_id: "codex-session".to_string(),
+                    input_tokens: 800,
+                    output_tokens: 200,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 300,
+                    total_tokens: 1_300,
+                    total_cost: 1.15,
+                    last_activity: "2026-07-10".to_string(),
+                },
+            ],
+            totals: empty_session_report().totals,
+        };
+        let model_report = ModelReport {
+            models: vec![
+                ModelUsage {
+                    agent: "Claude Code".to_string(),
+                    model: "claude-fable-5".to_string(),
+                    family: "fable".to_string(),
+                    input_tokens: 700,
+                    output_tokens: 100,
+                    cache_creation_tokens: 100,
+                    cache_read_tokens: 200,
+                    total_tokens: 1_100,
+                    total_cost: 0.85,
+                },
+                ModelUsage {
+                    agent: "Codex".to_string(),
+                    model: "gpt-5.6-sol".to_string(),
+                    family: "openai".to_string(),
+                    input_tokens: 800,
+                    output_tokens: 200,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 300,
+                    total_tokens: 1_300,
+                    total_cost: 1.15,
+                },
+            ],
+            totals: TokenUsageTotals {
+                input_tokens: 1_500,
+                output_tokens: 300,
+                cache_creation_tokens: 100,
+                cache_read_tokens: 500,
+                total_tokens: 2_400,
+                total_cost: 2.0,
+            },
+        };
+        TuiApp::new(
+            daily_report,
+            session_report,
+            model_report,
+            BillingBlockManager::new(),
+        )
+    }
+
+    fn rendered_text(app: &mut TuiApp, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| app.ui(frame))
+            .expect("overview should render");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .chunks(width as usize)
+            .map(|row| row.iter().map(|cell| cell.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn overview_is_readable_at_supported_terminal_sizes() {
+        for (width, height) in [
+            (80, 24),
+            (96, 28),
+            (100, 28),
+            (104, 28),
+            (112, 30),
+            (120, 32),
+            (160, 40),
+        ] {
+            let text = rendered_text(&mut audit_app(), width, height);
+            assert!(text.contains("Audit overview"), "{width}x{height}");
+            assert!(text.contains("Agent split"), "{width}x{height}");
+            assert!(text.contains("Claude Code"), "{width}x{height}");
+            assert!(text.contains("Codex"), "{width}x{height}");
+            assert!(text.contains("Top models"), "{width}x{height}");
+            assert!(text.contains("Daily cost trend"), "{width}x{height}");
+        }
+    }
+
+    #[test]
+    fn model_view_keeps_both_agents_visible_and_explains_cache_writes() {
+        for (width, height) in [
+            (80, 24),
+            (96, 28),
+            (100, 28),
+            (104, 28),
+            (112, 30),
+            (120, 32),
+            (160, 40),
+        ] {
+            let mut app = audit_app();
+            app.current_tab = Tab::Models;
+            let text = rendered_text(&mut app, width, height);
+            assert!(text.contains("Claude Code"), "{width}x{height}");
+            assert!(text.contains("Codex"), "{width}x{height}");
+            assert!(text.contains("claude-fable-5"), "{width}x{height}");
+            assert!(text.contains("gpt-5.6-sol"), "{width}x{height}");
+            assert!(text.contains("TOTAL"), "{width}x{height}");
+            assert!(text.contains("Codex W — if unreported"), "{width}x{height}");
+            if width >= 112 {
+                assert!(text.contains("Cache W"), "{width}x{height}");
+                assert!(text.contains("Cache R"), "{width}x{height}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_model_report_receiver_does_not_block_tui_polling() {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let mut app = TuiApp::new(
+            empty_daily_report(),
+            empty_session_report(),
+            empty_model_report(),
+            BillingBlockManager::new(),
+        );
+        app.set_model_report_receiver(receiver);
+
+        let start = Instant::now();
+        app.poll_model_report();
+        let elapsed = start.elapsed();
+
+        assert!(app.model_report_loading);
+        assert!(
+            elapsed < Duration::from_millis(10),
+            "empty model receiver poll took {elapsed:?}"
+        );
+
+        sender
+            .send(Ok(ModelReport {
+                models: vec![ModelUsage {
+                    agent: "Codex".to_string(),
+                    model: "gpt-5-codex".to_string(),
+                    family: "openai".to_string(),
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 2,
+                    total_tokens: 17,
+                    total_cost: 0.0001,
+                }],
+                totals: TokenUsageTotals {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                    cache_creation_tokens: 0,
+                    cache_read_tokens: 2,
+                    total_tokens: 17,
+                    total_cost: 0.0001,
+                },
+            }))
+            .expect("Failed to send model report");
+
+        app.poll_model_report();
+
+        assert!(!app.model_report_loading);
+        assert!(app.model_report_error.is_none());
+        assert_eq!(app.model_report.models.len(), 1);
+        assert_eq!(app.model_table_state.selected(), Some(0));
     }
 }

@@ -2,7 +2,6 @@
 //!
 //! This module provides visual feedback components including:
 //! - Loading animations with Unicode braille patterns
-//! - Smooth progress bars for cost/token usage
 //! - Visual feedback for key presses
 //! - Toast notifications
 //! - Enhanced status bar with real-time information
@@ -12,7 +11,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use std::time::{Duration, Instant};
 
@@ -99,99 +98,6 @@ pub enum AnimationStyle {
     Spinner,
     #[allow(dead_code)]
     Progress,
-}
-
-/// Enhanced progress bar with smooth animations
-#[derive(Debug, Clone)]
-pub struct SmoothProgressBar {
-    current: f64,
-    target: f64,
-    max: f64,
-    label: String,
-    color_scheme: ProgressColorScheme,
-    animation_speed: f64,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ProgressColorScheme {
-    CostBased,  // Green -> Yellow -> Red based on cost
-    TokenBased, // Blue gradient
-    #[allow(dead_code)]
-    Efficiency, // Cyan gradient
-    #[allow(dead_code)]
-    Success, // Green
-    #[allow(dead_code)]
-    Warning, // Yellow
-    #[allow(dead_code)]
-    Error, // Red
-}
-
-impl SmoothProgressBar {
-    pub fn new(label: String, max: f64) -> Self {
-        Self {
-            current: 0.0,
-            target: 0.0,
-            max,
-            label,
-            color_scheme: ProgressColorScheme::CostBased,
-            animation_speed: 0.1,
-        }
-    }
-
-    pub fn set_value(&mut self, value: f64) {
-        self.target = value.min(self.max);
-    }
-
-    pub fn set_max(&mut self, max: f64) {
-        self.max = max;
-    }
-
-    pub fn set_color_scheme(&mut self, scheme: ProgressColorScheme) {
-        self.color_scheme = scheme;
-    }
-
-    pub fn tick(&mut self) {
-        if (self.current - self.target).abs() > 0.001 {
-            let diff = self.target - self.current;
-            self.current += diff * self.animation_speed;
-        }
-    }
-
-    pub fn render(&self, f: &mut Frame, area: Rect) {
-        let ratio = (self.current / self.max).clamp(0.0, 1.0);
-
-        let color = match self.color_scheme {
-            ProgressColorScheme::CostBased => {
-                if ratio < 0.33 {
-                    Color::Green
-                } else if ratio < 0.66 {
-                    Color::Yellow
-                } else {
-                    Color::Red
-                }
-            }
-            ProgressColorScheme::TokenBased => Color::Blue,
-            ProgressColorScheme::Efficiency => Color::Cyan,
-            ProgressColorScheme::Success => Color::Green,
-            ProgressColorScheme::Warning => Color::Yellow,
-            ProgressColorScheme::Error => Color::Red,
-        };
-
-        let gauge = Gauge::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(color)),
-            )
-            .gauge_style(Style::default().fg(color).bg(Color::Black))
-            .ratio(ratio)
-            .label(format!(
-                "{}: {:.2}/{:.2}",
-                self.label, self.current, self.max
-            ));
-
-        f.render_widget(gauge, area);
-    }
 }
 
 /// Visual feedback for key presses
@@ -534,7 +440,6 @@ impl EnhancedStatusBar {
 #[derive(Debug)]
 pub struct VisualEffectsManager {
     pub loading_animations: Vec<LoadingAnimation>,
-    pub progress_bars: Vec<SmoothProgressBar>,
     pub key_press_effects: Vec<KeyPressEffect>,
     pub toast_notifications: Vec<ToastNotification>,
     pub status_bar: EnhancedStatusBar,
@@ -544,7 +449,6 @@ impl VisualEffectsManager {
     pub fn new() -> Self {
         Self {
             loading_animations: Vec::new(),
-            progress_bars: Vec::new(),
             key_press_effects: Vec::new(),
             toast_notifications: Vec::new(),
             status_bar: EnhancedStatusBar::new(),
@@ -569,11 +473,6 @@ impl VisualEffectsManager {
         // Update animations
         for anim in &mut self.loading_animations {
             anim.tick();
-        }
-
-        // Update progress bars
-        for bar in &mut self.progress_bars {
-            bar.tick();
         }
 
         // Remove expired effects

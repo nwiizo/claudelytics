@@ -22,16 +22,18 @@ mod tabs;
 
 use crate::billing_blocks::BillingBlockManager;
 use crate::cache_analysis::CacheAnalysis;
-use crate::models::{Command, DailyReport, SessionReport, WeeklyReport};
+use crate::models::{Command, DailyReport, ModelReport, SessionReport, WeeklyReport};
 use crate::tui_visuals::VisualEffectsManager;
 
 use ratatui::widgets::{ScrollbarState, TableState};
+use std::sync::mpsc::Receiver;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum Tab {
     Overview,
     Daily,
     Weekly,
+    Models,
     Sessions,
     Cache,
     BillingBlocks,
@@ -55,14 +57,6 @@ pub(crate) enum SortMode {
     Tokens,
     Project,
     Efficiency,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) enum TimeFilter {
-    All,
-    Today,
-    LastWeek,
-    LastMonth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -93,12 +87,17 @@ pub(crate) struct PricingCacheStatus {
 pub struct TuiApp {
     pub(crate) daily_report: DailyReport,
     pub(crate) session_report: SessionReport,
+    pub(crate) model_report: ModelReport,
+    pub(crate) model_report_loading: bool,
+    pub(crate) model_report_error: Option<String>,
+    pub(crate) model_report_receiver: Option<Receiver<Result<ModelReport, String>>>,
     pub(crate) original_daily_report: DailyReport,
     pub(crate) original_session_report: SessionReport,
     pub(crate) current_tab: Tab,
     pub(crate) current_mode: AppMode,
     pub(crate) daily_table_state: TableState,
     pub(crate) session_table_state: TableState,
+    pub(crate) model_table_state: TableState,
     pub(crate) command_table_state: TableState,
     pub(crate) session_scroll_state: ScrollbarState,
     pub(crate) command_scroll_state: ScrollbarState,
@@ -106,7 +105,6 @@ pub struct TuiApp {
     pub(crate) search_mode: bool,
     pub(crate) search_query: String,
     pub(crate) sort_mode: SortMode,
-    pub(crate) time_filter: TimeFilter,
     pub(crate) status_message: Option<String>,
     pub(crate) show_help_popup: bool,
     // Command palette

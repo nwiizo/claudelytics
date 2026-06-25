@@ -3,7 +3,8 @@ use crate::models::{DailyUsageMap, SessionUsageMap, TokenUsage, UsageRecord};
 use crate::models_registry::ModelsRegistry;
 use crate::pricing::{FAST_MODE_MULTIPLIER, PricingFetcher, get_fallback_pricing};
 use anyhow::{Context, Result};
-use chrono::{Local, NaiveDate, TimeZone};
+use chrono::{DateTime, NaiveDate, Utc};
+use chrono_tz::Tz;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
@@ -29,7 +30,9 @@ pub struct UsageParser {
     since: Option<NaiveDate>,
     until: Option<NaiveDate>,
     model_filter: Option<String>,
+    project_filter: Option<String>,
     cost_mode: CostMode,
+    timezone: Tz,
     pricing_fetcher: PricingFetcher,
     fallback_pricing: HashMap<String, crate::pricing::ModelPricing>,
     models_registry: ModelsRegistry,
@@ -60,8 +63,30 @@ impl UsageParser {
         model_filter: Option<String>,
         cost_mode: CostMode,
     ) -> Result<Self> {
+        Self::new_multi_with_options(
+            claude_dirs,
+            since,
+            until,
+            model_filter,
+            cost_mode,
+            None,
+            None,
+        )
+    }
+
+    /// Create a parser with advanced options used by ccusage-compatible flags.
+    pub fn new_multi_with_options(
+        claude_dirs: Vec<PathBuf>,
+        since: Option<String>,
+        until: Option<String>,
+        model_filter: Option<String>,
+        cost_mode: CostMode,
+        timezone: Option<String>,
+        project_filter: Option<String>,
+    ) -> Result<Self> {
         let since = since.map(|s| parse_date(&s)).transpose()?;
         let until = until.map(|s| parse_date(&s)).transpose()?;
+        let timezone = parse_timezone(timezone.as_deref())?;
 
         if let (Some(since), Some(until)) = (since, until)
             && since > until
@@ -75,13 +100,39 @@ impl UsageParser {
             until,
             fallback_pricing: get_fallback_pricing(),
             model_filter,
+            project_filter,
             cost_mode,
+            timezone,
             pricing_fetcher: PricingFetcher::new(),
             models_registry: ModelsRegistry::new(),
         })
     }
 
     pub fn parse_all(&self) -> Result<(DailyUsageMap, SessionUsageMap, BillingBlockManager)> {
+        let (daily_map, session_map, billing_manager, _) = self.parse_all_internal(false)?;
+        Ok((daily_map, session_map, billing_manager))
+    }
+
+    pub fn parse_all_with_models(
+        &self,
+    ) -> Result<(
+        DailyUsageMap,
+        SessionUsageMap,
+        BillingBlockManager,
+        HashMap<String, TokenUsage>,
+    )> {
+        self.parse_all_internal(true)
+    }
+
+    fn parse_all_internal(
+        &self,
+        include_models: bool,
+    ) -> Result<(
+        DailyUsageMap,
+        SessionUsageMap,
+        BillingBlockManager,
+        HashMap<String, TokenUsage>,
+    )> {
         let jsonl_files = self.find_jsonl_files()?;
 
         if jsonl_files.is_empty() {
@@ -91,32 +142,44 @@ impl UsageParser {
                 .map(|d| d.display().to_string())
                 .collect();
             eprintln!("Warning: No JSONL files found in {}", dir_list.join(", "));
-            return Ok((HashMap::new(), HashMap::new(), BillingBlockManager::new()));
+            return Ok((
+                HashMap::new(),
+                HashMap::new(),
+                BillingBlockManager::new(),
+                HashMap::new(),
+            ));
         }
 
         // Use thread-safe billing block manager and dedup set
         let billing_manager = Arc::new(Mutex::new(BillingBlockManager::new()));
         let dedup_set: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
-        let results: Vec<(DailyUsageMap, SessionUsageMap)> = jsonl_files
-            .par_iter()
-            .filter_map(|file_path| {
-                let billing_manager_clone = Arc::clone(&billing_manager);
-                let dedup_clone = Arc::clone(&dedup_set);
-                match self.parse_file_with_billing(file_path, billing_manager_clone, dedup_clone) {
-                    Ok(result) => Some(result),
-                    Err(e) => {
-                        eprintln!("Warning: Failed to parse {}: {}", file_path.display(), e);
-                        None
+        let results: Vec<(DailyUsageMap, SessionUsageMap, HashMap<String, TokenUsage>)> =
+            jsonl_files
+                .par_iter()
+                .filter_map(|file_path| {
+                    let billing_manager_clone = Arc::clone(&billing_manager);
+                    let dedup_clone = Arc::clone(&dedup_set);
+                    match self.parse_file_with_billing_and_models(
+                        file_path,
+                        billing_manager_clone,
+                        dedup_clone,
+                        include_models,
+                    ) {
+                        Ok(result) => Some(result),
+                        Err(e) => {
+                            eprintln!("Warning: Failed to parse {}: {}", file_path.display(), e);
+                            None
+                        }
                     }
-                }
-            })
-            .collect();
+                })
+                .collect();
 
         let mut daily_map = HashMap::new();
         let mut session_map = HashMap::new();
+        let mut model_map = HashMap::new();
 
-        for (daily, sessions) in results {
+        for (daily, sessions, models) in results {
             for (date, usage) in daily {
                 daily_map
                     .entry(date)
@@ -133,6 +196,13 @@ impl UsageParser {
                     entry.1 = last_activity;
                 }
             }
+
+            for (model, usage) in models {
+                model_map
+                    .entry(model)
+                    .or_insert_with(TokenUsage::default)
+                    .add(&usage);
+            }
         }
 
         // Extract the billing manager from Arc<Mutex<>>
@@ -140,7 +210,7 @@ impl UsageParser {
             .map(|mutex| mutex.into_inner().expect("mutex not poisoned"))
             .unwrap_or_else(|arc| arc.lock().expect("mutex not poisoned").clone());
 
-        Ok((daily_map, session_map, billing_manager))
+        Ok((daily_map, session_map, billing_manager, model_map))
     }
 
     fn find_jsonl_files(&self) -> Result<Vec<PathBuf>> {
@@ -166,6 +236,7 @@ impl UsageParser {
                         .map(|ext| ext == "jsonl")
                         .unwrap_or(false)
                 })
+                .filter(|entry| self.file_may_match_date_filter(entry.path()))
                 .map(|entry| entry.path().to_path_buf())
                 .collect();
 
@@ -191,20 +262,40 @@ impl UsageParser {
         Ok(all_files)
     }
 
-    fn parse_file_with_billing(
+    fn file_may_match_date_filter(&self, path: &Path) -> bool {
+        let Some(since) = self.since else {
+            return true;
+        };
+
+        let Ok(modified) = std::fs::metadata(path).and_then(|metadata| metadata.modified()) else {
+            return true;
+        };
+        let modified_date = DateTime::<Utc>::from(modified)
+            .with_timezone(&self.timezone)
+            .date_naive();
+
+        modified_date >= since
+    }
+
+    fn parse_file_with_billing_and_models(
         &self,
         file_path: &Path,
         billing_manager: Arc<Mutex<BillingBlockManager>>,
         dedup_set: Arc<Mutex<HashSet<String>>>,
-    ) -> Result<(DailyUsageMap, SessionUsageMap)> {
+        include_models: bool,
+    ) -> Result<(DailyUsageMap, SessionUsageMap, HashMap<String, TokenUsage>)> {
         let file = File::open(file_path)
             .with_context(|| format!("Failed to open file: {}", file_path.display()))?;
         let reader = BufReader::new(file);
 
         let mut daily_map = HashMap::new();
         let mut session_map = HashMap::new();
+        let mut model_map = HashMap::new();
 
         let session_info = self.extract_session_info(file_path)?;
+        if !self.should_include_project(&session_info) {
+            return Ok((daily_map, session_map, model_map));
+        }
 
         for line in reader.lines() {
             let line = line?;
@@ -237,7 +328,7 @@ impl UsageParser {
                         // Calculate cost based on cost mode
                         self.apply_cost_mode(&mut usage, &record, is_fast);
 
-                        let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+                        let date = timestamp.with_timezone(&self.timezone).date_naive();
 
                         // Add to daily map
                         daily_map
@@ -258,6 +349,13 @@ impl UsageParser {
                         if let Ok(mut manager) = billing_manager.lock() {
                             manager.add_usage(timestamp, &usage, Some(&session_info));
                         }
+
+                        if include_models && let Some(model_name) = record.get_model_name() {
+                            model_map
+                                .entry(model_name.to_string())
+                                .or_insert_with(TokenUsage::default)
+                                .add(&usage);
+                        }
                     }
                 }
                 Err(_) => {
@@ -267,7 +365,19 @@ impl UsageParser {
             }
         }
 
-        Ok((daily_map, session_map))
+        Ok((daily_map, session_map, model_map))
+    }
+
+    #[cfg(test)]
+    fn parse_file_with_billing(
+        &self,
+        file_path: &Path,
+        billing_manager: Arc<Mutex<BillingBlockManager>>,
+        dedup_set: Arc<Mutex<HashSet<String>>>,
+    ) -> Result<(DailyUsageMap, SessionUsageMap)> {
+        let (daily, sessions, _) =
+            self.parse_file_with_billing_and_models(file_path, billing_manager, dedup_set, false)?;
+        Ok((daily, sessions))
     }
 
     fn extract_session_info(&self, file_path: &Path) -> Result<String> {
@@ -304,7 +414,7 @@ impl UsageParser {
             Some(ts) => ts,
             None => return false,
         };
-        let date = Local.from_utc_datetime(&timestamp.naive_utc()).date_naive();
+        let date = timestamp.with_timezone(&self.timezone).date_naive();
 
         if let Some(since) = self.since
             && date < since
@@ -333,18 +443,33 @@ impl UsageParser {
         true
     }
 
+    fn should_include_project(&self, session_info: &str) -> bool {
+        let Some(filter) = &self.project_filter else {
+            return true;
+        };
+
+        let filter = filter.to_lowercase();
+        let session_info = session_info.to_lowercase();
+        let project = session_info.split('/').next().unwrap_or("");
+        session_info.contains(&filter) || project.contains(&filter)
+    }
+
     /// Calculate cost for a single record from token counts and model pricing.
     /// Returns cost with fast mode multiplier already applied if applicable.
     fn calculate_cost_for_record(&self, record: &UsageRecord, model_name: &str) -> f64 {
         let fallback_pricing = &self.fallback_pricing;
 
-        if let Some(pricing) = self
-            .pricing_fetcher
-            .get_model_pricing(fallback_pricing, model_name)
-            && let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref())
+        if let Some(pricing) = self.pricing_fetcher.get_model_pricing_at(
+            fallback_pricing,
+            model_name,
+            record
+                .timestamp
+                .map(|timestamp| timestamp.date_naive())
+                .unwrap_or_else(|| Utc::now().date_naive()),
+        ) && let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref())
         {
             let base_cost = self.pricing_fetcher.calculate_cost(
-                &pricing,
+                pricing,
                 usage.input_tokens,
                 usage.output_tokens,
                 usage.cache_creation_input_tokens,
@@ -411,22 +536,27 @@ impl UsageParser {
 }
 
 fn parse_date(date_str: &str) -> Result<NaiveDate> {
-    if date_str.len() != 8 {
-        anyhow::bail!("Date must be in YYYYMMDD format");
+    if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
+        return Ok(date);
     }
 
-    let year: i32 = date_str[0..4]
-        .parse()
-        .with_context(|| "Invalid year in date")?;
-    let month: u32 = date_str[4..6]
-        .parse()
-        .with_context(|| "Invalid month in date")?;
-    let day: u32 = date_str[6..8]
-        .parse()
-        .with_context(|| "Invalid day in date")?;
+    if let Ok(date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+        return Ok(date);
+    }
 
-    NaiveDate::from_ymd_opt(year, month, day)
-        .ok_or_else(|| anyhow::anyhow!("Invalid date: {}", date_str))
+    anyhow::bail!("Date must be in YYYYMMDD or YYYY-MM-DD format")
+}
+
+pub(crate) fn parse_timezone(timezone: Option<&str>) -> Result<Tz> {
+    match timezone {
+        None | Some("") | Some("local") | Some("Local") => {
+            let local_name = std::env::var("TZ").unwrap_or_else(|_| "UTC".to_string());
+            Ok(local_name.parse::<Tz>().unwrap_or(chrono_tz::UTC))
+        }
+        Some(tz) => tz
+            .parse::<Tz>()
+            .with_context(|| format!("Invalid timezone '{}'. Use an IANA name like UTC, Asia/Tokyo, or America/Los_Angeles", tz)),
+    }
 }
 
 #[cfg(test)]
@@ -434,6 +564,7 @@ mod tests {
     use super::*;
     use std::fs;
     use std::io::Write;
+    use std::time::{Duration as StdDuration, Instant};
     use tempfile::TempDir;
 
     fn create_test_jsonl_file(dir: &Path, filename: &str, content: &str) -> PathBuf {
@@ -464,6 +595,10 @@ mod tests {
             NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
         );
         assert_eq!(
+            parse_date("2024-01-01").unwrap(),
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+        );
+        assert_eq!(
             parse_date("20231231").unwrap(),
             NaiveDate::from_ymd_opt(2023, 12, 31).unwrap()
         );
@@ -471,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_parse_date_invalid_format() {
-        assert!(parse_date("2024-01-01").is_err());
+        assert!(parse_date("2024/01/01").is_err());
         assert!(parse_date("240101").is_err());
         assert!(parse_date("202401001").is_err());
     }
@@ -678,8 +813,8 @@ mod tests {
         let content2 = r#"{"uuid":"uuid2","type":"response.done","timestamp":"2024-01-16T12:00:00Z","message":{"model":"claude-3-sonnet-20240229","usage":{"input_tokens":50,"output_tokens":100,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}},"sessionId":"session2"}
 "#;
 
-        create_test_jsonl_file(&projects_dir1, "session1.jsonl", &content1);
-        create_test_jsonl_file(&projects_dir2, "session2.jsonl", &content2);
+        create_test_jsonl_file(&projects_dir1, "session1.jsonl", content1);
+        create_test_jsonl_file(&projects_dir2, "session2.jsonl", content2);
 
         let parser = UsageParser::new(temp_dir.path().to_path_buf(), None, None, None)
             .expect("Failed to create parser");
@@ -756,5 +891,57 @@ mod tests {
         let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
         assert!(daily_map.contains_key(&date));
         assert_eq!(daily_map[&date].input_tokens, 150);
+    }
+
+    #[test]
+    fn test_parse_all_performance_regression() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let projects_root = temp_dir.path().join("projects");
+        fs::create_dir_all(&projects_root).expect("Failed to create projects dir");
+
+        let file_count = 60;
+        let records_per_file = 100;
+        for file_idx in 0..file_count {
+            let project_dir = projects_root.join(format!("project-{file_idx:03}"));
+            fs::create_dir_all(&project_dir).expect("Failed to create project dir");
+            let mut content = String::new();
+            for record_idx in 0..records_per_file {
+                let minute = record_idx % 60;
+                content.push_str(&format!(
+                    r#"{{"uuid":"uuid-{file_idx}-{record_idx}","type":"response.done","timestamp":"2024-01-{:02}T12:{minute:02}:00Z","message":{{"model":"claude-3-5-sonnet-20241022","usage":{{"input_tokens":100,"output_tokens":50,"cache_creation_input_tokens":10,"cache_read_input_tokens":20}}}},"sessionId":"session-{file_idx}"}}"#,
+                    (file_idx % 7) + 1
+                ));
+                content.push('\n');
+            }
+            create_test_jsonl_file(&project_dir, &format!("session-{file_idx}.jsonl"), &content);
+        }
+
+        let parser = UsageParser::new(temp_dir.path().to_path_buf(), None, None, None)
+            .expect("Failed to create parser");
+
+        let start = Instant::now();
+        let (daily_map, session_map, billing_manager) =
+            parser.parse_all().expect("Failed to parse all files");
+        let elapsed = start.elapsed();
+
+        assert_eq!(session_map.len(), file_count);
+        assert_eq!(daily_map.len(), 7);
+        assert!(!billing_manager.get_all_blocks().is_empty());
+        assert!(
+            elapsed < StdDuration::from_secs(2),
+            "parse_all took {elapsed:?} for {file_count} files x {records_per_file} records"
+        );
+
+        let start = Instant::now();
+        let (_, _, _, model_map) = parser
+            .parse_all_with_models()
+            .expect("Failed to parse all files with models");
+        let elapsed = start.elapsed();
+
+        assert_eq!(model_map.len(), 1);
+        assert!(
+            elapsed < StdDuration::from_secs(2),
+            "parse_all_with_models took {elapsed:?} for {file_count} files x {records_per_file} records"
+        );
     }
 }

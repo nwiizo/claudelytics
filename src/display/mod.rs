@@ -2,7 +2,6 @@ mod billing;
 mod daily;
 mod helpers;
 mod json;
-mod model_breakdown;
 mod monthly;
 mod session;
 mod summary;
@@ -16,7 +15,6 @@ pub use daily::{
 };
 pub use helpers::{print_error, print_info, print_warning};
 pub use json::display_report_json;
-pub use model_breakdown::display_model_breakdown_report;
 pub use monthly::{display_monthly_report_enhanced, display_monthly_report_table};
 pub use session::{
     display_session_report_enhanced, display_session_report_responsive,

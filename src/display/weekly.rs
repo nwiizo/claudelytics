@@ -46,7 +46,7 @@ fn display_weekly_table(report: &WeeklyReport) {
 
     for entry in &report.weekly {
         table.add_row(vec![
-            Cell::new(format!("{} ~ {}", &entry.week_start, &entry.week_end)),
+            Cell::new(format!("{} ~ {}", entry.week_start, entry.week_end)),
             Cell::new(entry.days_active),
             Cell::new(format_number(entry.input_tokens)).fg(Color::Green),
             Cell::new(format_number(entry.output_tokens)).fg(Color::Yellow),

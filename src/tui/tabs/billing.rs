@@ -232,7 +232,7 @@ impl TuiApp {
             };
 
             Row::new(vec![
-                Cell::from(format!("{} - {}", &block.date, &block.time_range)).style(style),
+                Cell::from(format!("{} - {}", block.date, block.time_range)).style(style),
                 Cell::from(format!("${:.2}", block.usage.total_cost))
                     .style(Style::default().fg(cost_color)),
                 Cell::from(Self::format_number(block.usage.total_tokens()))
@@ -264,7 +264,7 @@ impl TuiApp {
                 .title("\u{1f4cb} 5-Hour Billing Blocks")
                 .border_style(Style::default().fg(Color::Blue)),
         )
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+        .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED))
         .highlight_symbol("\u{25ba} ");
 
         f.render_stateful_widget(table, chunks[1], &mut self.billing_blocks_table_state);

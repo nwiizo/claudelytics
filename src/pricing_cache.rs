@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-use crate::pricing::{ModelPricing, get_fallback_pricing};
+use crate::pricing::{ModelPricing, PricingFetcher, get_fallback_pricing};
 
 /// Cache duration for pricing data (7 days)
 const CACHE_DURATION_DAYS: i64 = 7;
@@ -153,63 +153,7 @@ impl CachedPricingFetcher {
 
     /// Get model pricing with caching
     pub fn get_model_pricing(&self, model_name: &str) -> Option<&ModelPricing> {
-        let pricing_data = self.get_pricing_data();
-
-        // Direct match first
-        if let Some(pricing) = pricing_data.get(model_name) {
-            return Some(pricing);
-        }
-
-        // Try variations for Claude models
-        let variations = Self::get_model_variations(model_name);
-
-        for variation in &variations {
-            if !variation.is_empty()
-                && let Some(pricing) = pricing_data.get(variation)
-            {
-                return Some(pricing);
-            }
-        }
-
-        // Partial match as fallback
-        for (key, pricing) in pricing_data {
-            if key.contains(model_name) || model_name.contains(key) {
-                return Some(pricing);
-            }
-        }
-
-        None
-    }
-
-    /// Get model name variations for matching
-    fn get_model_variations(model_name: &str) -> Vec<String> {
-        vec![
-            model_name.to_string(),
-            format!("claude-3-5-{}", model_name.trim_start_matches("claude-")),
-            format!("claude-3-{}", model_name.trim_start_matches("claude-")),
-            format!("claude-{}", model_name.trim_start_matches("claude-")),
-            model_name.replace("claude-", ""),
-            // Handle specific model mappings
-            if model_name.contains("sonnet-4-6") || model_name.contains("sonnet-4.6") {
-                "claude-sonnet-4-6-20260310".to_string()
-            } else if model_name.contains("sonnet-4") {
-                "claude-sonnet-4-20250514".to_string()
-            } else {
-                String::new()
-            },
-            if model_name.contains("opus-4-6") || model_name.contains("opus-4.6") {
-                "claude-opus-4-6-20260310".to_string()
-            } else if model_name.contains("opus-4") {
-                "claude-opus-4-20250514".to_string()
-            } else {
-                String::new()
-            },
-            if model_name.contains("haiku-4-5") || model_name.contains("haiku-4.5") {
-                "claude-haiku-4-5-20251001".to_string()
-            } else {
-                String::new()
-            },
-        ]
+        PricingFetcher::new().get_model_pricing(self.get_pricing_data(), model_name)
     }
 
     /// Calculate cost using cached pricing
@@ -222,25 +166,13 @@ impl CachedPricingFetcher {
         cache_read_tokens: u64,
     ) -> f64 {
         if let Some(pricing) = self.get_model_pricing(model_name) {
-            let mut total_cost = 0.0;
-
-            if let Some(input_cost) = pricing.input_cost_per_token {
-                total_cost += input_tokens as f64 * input_cost;
-            }
-
-            if let Some(output_cost) = pricing.output_cost_per_token {
-                total_cost += output_tokens as f64 * output_cost;
-            }
-
-            if let Some(cache_creation_cost) = pricing.cache_creation_input_token_cost {
-                total_cost += cache_creation_tokens as f64 * cache_creation_cost;
-            }
-
-            if let Some(cache_read_cost) = pricing.cache_read_input_token_cost {
-                total_cost += cache_read_tokens as f64 * cache_read_cost;
-            }
-
-            total_cost
+            PricingFetcher::new().calculate_cost(
+                pricing,
+                input_tokens,
+                output_tokens,
+                cache_creation_tokens,
+                cache_read_tokens,
+            )
         } else {
             0.0
         }
@@ -268,12 +200,11 @@ mod tests {
     }
 
     #[test]
-    fn test_model_variations() {
-        let variations = CachedPricingFetcher::get_model_variations("claude-sonnet-4");
-        assert!(variations.contains(&"claude-sonnet-4-20250514".to_string()));
+    fn test_current_model_aliases_use_shared_resolution() {
+        let fetcher = CachedPricingFetcher::new();
 
-        let variations = CachedPricingFetcher::get_model_variations("opus-4");
-        assert!(variations.contains(&"claude-opus-4-20250514".to_string()));
+        assert!(fetcher.get_model_pricing("fable-5").is_some());
+        assert!(fetcher.get_model_pricing("gpt-5.6").is_some());
     }
 
     #[test]

@@ -611,3 +611,26 @@ pub fn run_live_dashboard(claude_dir: &Path, options: LiveDashboardOptions) -> R
     let mut dashboard = LiveDashboard::new(claude_dir, config)?;
     dashboard.run()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_options_map_to_dashboard_config() {
+        let config = LiveDashboardConfig::from(LiveDashboardOptions {
+            refresh: 10,
+            token_limit: Some(1_000),
+            cost_limit: Some(5.0),
+            show_details: true,
+            enable_alerts: false,
+        });
+
+        assert_eq!(config.refresh_interval, 10);
+        assert_eq!(config.token_limit, Some(1_000));
+        assert_eq!(config.daily_cost_limit, Some(5.0));
+        assert_eq!(config.monthly_cost_limit, Some(150.0));
+        assert!(config.show_details);
+        assert!(!config.enable_alerts);
+    }
+}
