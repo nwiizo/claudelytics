@@ -1,5 +1,5 @@
 use anyhow::Result;
-use copypasta::{ClipboardContext, ClipboardProvider};
+use copypasta::ClipboardProvider;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{AppMode, Tab, TuiApp};
@@ -413,7 +413,7 @@ impl TuiApp {
                 session.project_path, session.session_id, session.total_cost, session.total_tokens
             );
 
-            if let Ok(mut ctx) = ClipboardContext::new() {
+            if let Some(ctx) = self.clipboard.0.as_mut() {
                 if ctx.set_contents(info.clone()).is_ok() {
                     self.status_message =
                         Some("\u{1f4cb} Copied session info to clipboard".to_string());
