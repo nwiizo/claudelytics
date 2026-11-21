@@ -38,5 +38,6 @@ terminal_size = "0.4"
 tempfile = "3.8"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 ctrlc = "3.4"
+llm-prices = "1.8.0"
 
 [dev-dependencies]

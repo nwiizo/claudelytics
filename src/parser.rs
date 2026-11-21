@@ -459,14 +459,10 @@ impl UsageParser {
     fn calculate_cost_for_record(&self, record: &UsageRecord, model_name: &str) -> f64 {
         let fallback_pricing = &self.fallback_pricing;
 
-        if let Some(pricing) = self.pricing_fetcher.get_model_pricing_at(
-            fallback_pricing,
-            model_name,
-            record
-                .timestamp
-                .map(|timestamp| timestamp.date_naive())
-                .unwrap_or_else(|| Utc::now().date_naive()),
-        ) && let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref())
+        if let Some(pricing) = self
+            .pricing_fetcher
+            .get_model_pricing(fallback_pricing, model_name)
+            && let Some(usage) = record.message.as_ref().and_then(|m| m.usage.as_ref())
         {
             let base_cost = self.pricing_fetcher.calculate_cost(
                 pricing,

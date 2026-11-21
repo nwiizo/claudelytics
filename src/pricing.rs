@@ -1,4 +1,3 @@
-use chrono::{NaiveDate, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
 
@@ -10,9 +9,19 @@ pub const TIERED_THRESHOLD: u64 = 200_000;
 
 /// OpenAI switches the whole request to long-context rates above this input size.
 pub const OPENAI_LONG_CONTEXT_THRESHOLD: u64 = 272_000;
-const SONNET_5_INTRO_PRICING_KEY: &str = "__claude-sonnet-5-intro";
-const SONNET_5_INTRO_END: NaiveDate =
-    NaiveDate::from_ymd_opt(2026, 8, 31).expect("valid Sonnet 5 pricing date");
+
+/// Current Claude models whose offline rates come from the `llm-prices` table
+/// (dated, source-cited Anthropic list prices) instead of hand-copied constants.
+const LLM_PRICES_CLAUDE_MODELS: &[&str] = &[
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "claude-opus-4-6",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-haiku-4-5-20251001",
+];
 
 pub(crate) fn canonical_model_name(model_name: &str) -> Option<&'static str> {
     if model_name == "gpt-5.6" {
@@ -80,22 +89,6 @@ impl PricingFetcher {
         pricing_data: &'a HashMap<String, ModelPricing>,
         model_name: &str,
     ) -> Option<&'a ModelPricing> {
-        self.get_model_pricing_at(pricing_data, model_name, Utc::now().date_naive())
-    }
-
-    pub fn get_model_pricing_at<'a>(
-        &self,
-        pricing_data: &'a HashMap<String, ModelPricing>,
-        model_name: &str,
-        usage_date: NaiveDate,
-    ) -> Option<&'a ModelPricing> {
-        if canonical_model_name(model_name) == Some("claude-sonnet-5")
-            && usage_date <= SONNET_5_INTRO_END
-            && let Some(pricing) = pricing_data.get(SONNET_5_INTRO_PRICING_KEY)
-        {
-            return Some(pricing);
-        }
-
         // Direct match first
         if let Some(pricing) = pricing_data.get(model_name) {
             return Some(pricing);
@@ -301,6 +294,28 @@ impl PricingFetcher {
     }
 }
 
+fn llm_prices_claude_pricing(model: &str) -> Option<ModelPricing> {
+    use llm_prices::Rate;
+
+    let row = llm_prices::lookup_provider("anthropic", model)?;
+    let per_token = |rate: Rate<'_>| {
+        row.rate(rate)
+            .map(|usd_per_million| usd_per_million / 1_000_000.0)
+    };
+    Some(ModelPricing {
+        input_cost_per_token: per_token(Rate::Input),
+        output_cost_per_token: per_token(Rate::Output),
+        // Claude Code writes the default 5-minute prompt cache.
+        cache_creation_input_token_cost: per_token(Rate::CacheWrite("5m")),
+        cache_read_input_token_cost: per_token(Rate::CacheRead),
+        input_cost_per_token_above_200k: None,
+        output_cost_per_token_above_200k: None,
+        cache_creation_cost_above_200k: None,
+        cache_read_cost_above_200k: None,
+        long_context_threshold: None,
+    })
+}
+
 // Offline fallback pricing aligned with current provider pricing and ccusage.
 pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
     let mut pricing = HashMap::new();
@@ -361,23 +376,14 @@ pub fn get_fallback_pricing() -> HashMap<String, ModelPricing> {
         claude_pricing(15.0, 75.0),
     );
 
-    // Current Claude generation.
-    for (model, input, output) in [
-        ("claude-fable-5", 10.0, 50.0),
-        ("claude-opus-5", 5.0, 25.0),
-        ("claude-opus-4-8", 5.0, 25.0),
-        ("claude-opus-4-7", 5.0, 25.0),
-        ("claude-opus-4-6", 5.0, 25.0),
-        ("claude-sonnet-5", 3.0, 15.0),
-        ("claude-sonnet-4-6", 3.0, 15.0),
-        ("claude-haiku-4-5-20251001", 1.0, 5.0),
-    ] {
-        pricing.insert(model.to_string(), claude_pricing(input, output));
+    // Current Claude generation: input, output, 5-minute cache write and
+    // cache read rates come straight from the llm-prices table, so per-model
+    // cache multipliers and price changes are not re-derived by hand here.
+    for &model in LLM_PRICES_CLAUDE_MODELS {
+        if let Some(model_pricing) = llm_prices_claude_pricing(model) {
+            pricing.insert(model.to_string(), model_pricing);
+        }
     }
-    pricing.insert(
-        SONNET_5_INTRO_PRICING_KEY.to_string(),
-        claude_pricing(2.0, 10.0),
-    );
 
     let openai_pricing = |input_per_million: f64, output_per_million: f64| ModelPricing {
         input_cost_per_token: Some(input_per_million / 1_000_000.0),
@@ -584,28 +590,46 @@ mod tests {
     }
 
     #[test]
-    fn test_sonnet_5_pricing_is_effective_dated() {
+    fn test_sonnet_5_uses_standard_two_ten_pricing() {
+        // Anthropic made the launch price ($2/$10) the standard price and
+        // cancelled the September 1, 2026 increase to $3/$15, so usage after
+        // August 2026 must not be billed at $3/$15.
         let fetcher = PricingFetcher::new();
         let data = get_fallback_pricing();
-        let introductory = fetcher
-            .get_model_pricing_at(
-                &data,
-                "claude-sonnet-5",
-                NaiveDate::from_ymd_opt(2026, 8, 31).unwrap(),
-            )
-            .unwrap();
-        let standard = fetcher
-            .get_model_pricing_at(
-                &data,
-                "claude-sonnet-5",
-                NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
-            )
-            .unwrap();
+        let pricing = fetcher
+            .get_model_pricing(&data, "claude-sonnet-5-20260630")
+            .expect("Sonnet 5 pricing should be registered");
 
-        assert_eq!(introductory.input_cost_per_token, Some(2.0 / 1_000_000.0));
-        assert_eq!(introductory.output_cost_per_token, Some(10.0 / 1_000_000.0));
-        assert_eq!(standard.input_cost_per_token, Some(3.0 / 1_000_000.0));
-        assert_eq!(standard.output_cost_per_token, Some(15.0 / 1_000_000.0));
+        assert_eq!(pricing.input_cost_per_token, Some(2.0 / 1_000_000.0));
+        assert_eq!(pricing.output_cost_per_token, Some(10.0 / 1_000_000.0));
+        assert_eq!(
+            pricing.cache_creation_input_token_cost,
+            Some(2.5 / 1_000_000.0)
+        );
+        assert_eq!(pricing.cache_read_input_token_cost, Some(0.2 / 1_000_000.0));
+
+        let cost = fetcher.calculate_cost(pricing, 1_000_000, 1_000_000, 0, 0);
+        assert!((cost - 12.0).abs() < 1e-9, "expected $12, got ${cost}");
+    }
+
+    #[test]
+    fn test_current_claude_models_all_resolve_from_llm_prices() {
+        let data = get_fallback_pricing();
+        for model in LLM_PRICES_CLAUDE_MODELS {
+            let pricing = data
+                .get(*model)
+                .unwrap_or_else(|| panic!("{model} missing from fallback pricing"));
+            assert!(pricing.input_cost_per_token.is_some(), "{model} input");
+            assert!(pricing.output_cost_per_token.is_some(), "{model} output");
+            assert!(
+                pricing.cache_creation_input_token_cost.is_some(),
+                "{model} cache write"
+            );
+            assert!(
+                pricing.cache_read_input_token_cost.is_some(),
+                "{model} cache read"
+            );
+        }
     }
 
     #[test]
